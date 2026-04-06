@@ -117,6 +117,20 @@ function handleRequest(req: Request): Response | Promise<Response> {
     return json(agent);
   }
 
+  // PATCH /agents/:id — update agent config
+  if (method === "PATCH" && path.startsWith("/agents/") && path.split("/").length === 3) {
+    return (async () => {
+      const agentId = path.split("/")[2];
+      const body = await parseBody(req);
+      if (!body) return json({ error: "Invalid body" }, 400);
+
+      const { updateAgentConfig } = await import("./agents");
+      const result = updateAgentConfig(agentId, body);
+      if (!result) return json({ error: "Agent not found" }, 404);
+      return json(result);
+    })();
+  }
+
   if (method === "POST" && path === "/agents") {
     return (async () => {
       const body = await parseBody(req);

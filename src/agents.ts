@@ -1,4 +1,4 @@
-import { readdirSync, existsSync, readFileSync } from "fs";
+import { readdirSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { AgentConfig, AgentState } from "./types";
 import { UNASSIGNED_DIR, OFFBOARDED_DIR } from "./types";
@@ -62,6 +62,31 @@ export function listAgents(): AgentState[] {
     if (state) agents.push(state);
   }
   return agents;
+}
+
+// Update agent config (partial update, writes to agent.json)
+export function updateAgentConfig(
+  agentId: string,
+  updates: Partial<AgentConfig>
+): AgentState | null {
+  const workingDir = registry.get(agentId);
+  if (!workingDir) return null;
+
+  const claudePath = join(workingDir, ".claude");
+  const config = readAgentConfig(claudePath);
+  if (!config) return null;
+
+  // Apply allowed updates
+  if (updates.name !== undefined) config.name = updates.name;
+  if (updates.model !== undefined) config.model = updates.model;
+  if (updates.effort !== undefined) config.effort = updates.effort;
+  if (updates.executionDelay !== undefined) config.executionDelay = updates.executionDelay;
+  if (updates.maxContextSize !== undefined) config.maxContextSize = updates.maxContextSize;
+  if (updates.tags !== undefined) config.tags = updates.tags;
+
+  writeFileSync(join(claudePath, "agent.json"), JSON.stringify(config, null, 2));
+
+  return getAgent(agentId);
 }
 
 // Scan filesystem to discover agents on startup
