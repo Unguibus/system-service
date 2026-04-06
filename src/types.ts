@@ -17,7 +17,7 @@ export interface AgentState {
   pid: number | null;
   location: "assigned" | "unassigned" | "offboarded";
   assignedPath: string | null; // null if unassigned
-  claudePath: string; // full path to .claude/ directory
+  agentPath: string; // full path to .unguibus/ directory
 }
 
 // Message envelope

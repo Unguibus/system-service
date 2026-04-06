@@ -21,8 +21,8 @@ export function getAgentWorkingDir(agentId: string): string | null {
   return registry.get(agentId) ?? null;
 }
 
-function readAgentConfig(claudePath: string): AgentConfig | null {
-  const agentJsonPath = join(claudePath, "agent.json");
+function readAgentConfig(agentPath: string): AgentConfig | null {
+  const agentJsonPath = join(agentPath, "agent.json");
   if (!existsSync(agentJsonPath)) return null;
   try {
     return JSON.parse(readFileSync(agentJsonPath, "utf-8"));
@@ -41,8 +41,8 @@ export function getAgent(agentId: string): AgentState | null {
   const workingDir = registry.get(agentId);
   if (!workingDir) return null;
 
-  const claudePath = join(workingDir, ".claude");
-  const config = readAgentConfig(claudePath);
+  const agentPath = join(workingDir, ".unguibus");
+  const config = readAgentConfig(agentPath);
   if (!config) return null;
 
   return {
@@ -51,7 +51,7 @@ export function getAgent(agentId: string): AgentState | null {
     pid: null,
     location: agentLocation(workingDir),
     assignedPath: agentLocation(workingDir) === "assigned" ? workingDir : null,
-    claudePath,
+    agentPath,
   };
 }
 
@@ -72,8 +72,8 @@ export function updateAgentConfig(
   const workingDir = registry.get(agentId);
   if (!workingDir) return null;
 
-  const claudePath = join(workingDir, ".claude");
-  const config = readAgentConfig(claudePath);
+  const agentPath = join(workingDir, ".unguibus");
+  const config = readAgentConfig(agentPath);
   if (!config) return null;
 
   // Apply allowed updates
@@ -85,7 +85,7 @@ export function updateAgentConfig(
   if (updates.maxTurns !== undefined) config.maxTurns = updates.maxTurns;
   if (updates.tags !== undefined) config.tags = updates.tags;
 
-  writeFileSync(join(claudePath, "agent.json"), JSON.stringify(config, null, 2));
+  writeFileSync(join(agentPath, "agent.json"), JSON.stringify(config, null, 2));
 
   return getAgent(agentId);
 }
@@ -97,10 +97,10 @@ export function discoverAgents(): void {
     for (const entry of readdirSync(UNASSIGNED_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const agentDir = join(UNASSIGNED_DIR, entry.name);
-      const claudePath = join(agentDir, ".claude");
-      if (!existsSync(join(claudePath, "agent.json"))) continue;
+      const agentPath = join(agentDir, ".unguibus");
+      if (!existsSync(join(agentPath, "agent.json"))) continue;
 
-      const config = readAgentConfig(claudePath);
+      const config = readAgentConfig(agentPath);
       if (config && !registry.has(config.id)) {
         registry.set(config.id, agentDir);
         registerAgentIAM(config.id, config.name, "agent", "system", agentDir);
@@ -115,10 +115,10 @@ export function discoverAgents(): void {
     if (registry.has(agent.agent_id)) continue; // Already loaded
     if (!agent.working_dir) continue;
 
-    const claudePath = join(agent.working_dir, ".claude");
-    if (!existsSync(join(claudePath, "agent.json"))) continue;
+    const agentPath = join(agent.working_dir, ".unguibus");
+    if (!existsSync(join(agentPath, "agent.json"))) continue;
 
-    const config = readAgentConfig(claudePath);
+    const config = readAgentConfig(agentPath);
     if (config) {
       registry.set(config.id, agent.working_dir);
       startAgent(config.id, agent.working_dir, config);

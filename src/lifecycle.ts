@@ -17,7 +17,7 @@ function generateAgentId(name: string): string {
 }
 
 function agentClaudeDir(agentId: string): string {
-  return join(UNASSIGNED_DIR, agentId, ".claude");
+  return join(UNASSIGNED_DIR, agentId, ".unguibus");
 }
 
 function readAgentJson(claudePath: string): AgentConfig | null {
@@ -42,9 +42,9 @@ export function createAgent(opts: {
 }): LifecycleResult & { agentId?: string } {
   const id = generateAgentId(opts.name);
   const agentDir = join(UNASSIGNED_DIR, id);
-  const claudeDir = join(agentDir, ".claude");
+  const unguibusDir = join(agentDir, ".unguibus");
 
-  mkdirSync(claudeDir, { recursive: true });
+  mkdirSync(unguibusDir, { recursive: true });
 
   const config: AgentConfig = {
     id,
@@ -57,11 +57,11 @@ export function createAgent(opts: {
     maxTurns: 25,
   };
 
-  writeAgentJson(claudeDir, config);
+  writeAgentJson(unguibusDir, config);
 
   // Initialize empty status
-  writeFileSync(join(claudeDir, "synapse.status"), "idle");
-  writeFileSync(join(claudeDir, "last-run-output.txt"), "");
+  writeFileSync(join(unguibusDir, "synapse.status"), "idle");
+  writeFileSync(join(unguibusDir, "last-run-output.txt"), "");
 
   // Register and start the agent
   registerAgentIAM(id, config.name, "agent", "system", agentDir);
@@ -70,15 +70,15 @@ export function createAgent(opts: {
   return { success: true, agentId: id };
 }
 
-// 3.2 Onboard — bring existing .claude/ under management
+// 3.2 Onboard — bring existing .unguibus/ under management
 export function onboardAgent(targetDir: string): LifecycleResult & { agentId?: string } {
-  const claudeDir = join(targetDir, ".claude");
-  if (!existsSync(claudeDir)) {
-    return { success: false, agentId: "", error: "No .claude/ directory found" };
+  const agentDir = join(targetDir, ".unguibus");
+  if (!existsSync(agentDir)) {
+    return { success: false, agentId: "", error: "No .unguibus/ directory found" };
   }
 
   // If already has agent.json with an ID, adopt it as-is
-  const existing = readAgentJson(claudeDir);
+  const existing = readAgentJson(agentDir);
   let config: AgentConfig;
 
   if (existing?.id) {
@@ -96,15 +96,15 @@ export function onboardAgent(targetDir: string): LifecycleResult & { agentId?: s
       maxContextSize: 5,
     maxTurns: 25,
     };
-    writeAgentJson(claudeDir, config);
+    writeAgentJson(agentDir, config);
   }
 
   // Enrich without disturbing existing files
-  if (!existsSync(join(claudeDir, "synapse.status"))) {
-    writeFileSync(join(claudeDir, "synapse.status"), "idle");
+  if (!existsSync(join(agentDir, "synapse.status"))) {
+    writeFileSync(join(agentDir, "synapse.status"), "idle");
   }
-  if (!existsSync(join(claudeDir, "last-run-output.txt"))) {
-    writeFileSync(join(claudeDir, "last-run-output.txt"), "");
+  if (!existsSync(join(agentDir, "last-run-output.txt"))) {
+    writeFileSync(join(agentDir, "last-run-output.txt"), "");
   }
 
   registerAgentIAM(config.id, config.name, "agent", "system", targetDir);
@@ -114,16 +114,16 @@ export function onboardAgent(targetDir: string): LifecycleResult & { agentId?: s
 }
 
 // 3.3 Assign — move unassigned agent into a target directory
-// If the target already has a .claude/, onboard it first then unassign it
+// If the target already has a .unguibus/, onboard it first then unassign it
 export function assignAgent(agentId: string, targetDir: string): LifecycleResult {
-  const srcClaudeDir = join(UNASSIGNED_DIR, agentId, ".claude");
-  const destClaudeDir = join(targetDir, ".claude");
+  const srcClaudeDir = join(UNASSIGNED_DIR, agentId, ".unguibus");
+  const destClaudeDir = join(targetDir, ".unguibus");
 
   if (!existsSync(srcClaudeDir)) {
     return { success: false, agentId, error: "Agent not found in unassigned" };
   }
 
-  // If target already has a .claude/, handle the existing agent
+  // If target already has a .unguibus/, handle the existing agent
   if (existsSync(destClaudeDir)) {
     const existingConfig = readAgentJson(destClaudeDir);
     if (existingConfig?.id) {
@@ -164,12 +164,12 @@ export function assignAgent(agentId: string, targetDir: string): LifecycleResult
 
 // 3.4 Unassign — move agent from working directory to unassigned
 export function unassignAgent(agentId: string, currentDir: string): LifecycleResult {
-  const srcClaudeDir = join(currentDir, ".claude");
+  const srcClaudeDir = join(currentDir, ".unguibus");
   const destDir = join(UNASSIGNED_DIR, agentId);
-  const destClaudeDir = join(destDir, ".claude");
+  const destClaudeDir = join(destDir, ".unguibus");
 
   if (!existsSync(srcClaudeDir)) {
-    return { success: false, agentId, error: "No .claude/ in current directory" };
+    return { success: false, agentId, error: "No .unguibus/ in current directory" };
   }
 
   stopAgent(agentId);
@@ -188,7 +188,7 @@ export function unassignAgent(agentId: string, currentDir: string): LifecycleRes
 // 3.5 Fork — copy agent, both keep running
 export function forkAgent(agentId: string, sourceClaudeDir: string): LifecycleResult & { forkId?: string } {
   if (!existsSync(sourceClaudeDir)) {
-    return { success: false, agentId, error: "Source .claude/ not found" };
+    return { success: false, agentId, error: "Source .unguibus/ not found" };
   }
 
   const sourceConfig = readAgentJson(sourceClaudeDir);
@@ -198,7 +198,7 @@ export function forkAgent(agentId: string, sourceClaudeDir: string): LifecycleRe
 
   const forkId = generateAgentId(`${sourceConfig.name}-fork`);
   const forkDir = join(UNASSIGNED_DIR, forkId);
-  const forkClaudeDir = join(forkDir, ".claude");
+  const forkClaudeDir = join(forkDir, ".unguibus");
 
   mkdirSync(forkDir, { recursive: true });
   cpSync(sourceClaudeDir, forkClaudeDir, { recursive: true });
@@ -228,7 +228,7 @@ export function offboardAgent(agentId: string, currentClaudeDir: string): Lifecy
   if (!currentClaudeDir.startsWith(UNASSIGNED_DIR)) {
     const tempDir = join(UNASSIGNED_DIR, agentId);
     mkdirSync(tempDir, { recursive: true });
-    renameSync(currentClaudeDir, join(tempDir, ".claude"));
+    renameSync(currentClaudeDir, join(tempDir, ".unguibus"));
     renameSync(tempDir, destDir);
   } else {
     renameSync(join(UNASSIGNED_DIR, agentId), destDir);

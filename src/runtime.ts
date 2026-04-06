@@ -16,7 +16,7 @@ interface ManagedAgent {
 const managed = new Map<string, ManagedAgent>();
 
 function claudeDir(workingDir: string): string {
-  return join(workingDir, ".claude");
+  return join(workingDir, ".unguibus");
 }
 
 function setStatus(workingDir: string, status: string): void {

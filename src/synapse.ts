@@ -13,7 +13,7 @@ import { drainMessages } from "./messages";
 interface SynapseState {
   config: AgentConfig;
   workingDir: string;
-  claudePath: string;
+  agentPath: string;
   store: AgentStore;
   batchTimer: ReturnType<typeof setTimeout> | null;
   pendingMessages: Message[];
@@ -23,18 +23,18 @@ interface SynapseState {
 
 const synapses = new Map<string, SynapseState>();
 
-function claudeDir(workingDir: string): string {
-  return join(workingDir, ".claude");
+function agentDataDir(workingDir: string): string {
+  return join(workingDir, ".unguibus");
 }
 
-function setStatus(claudePath: string, status: string): void {
+function setStatus(agentPath: string, status: string): void {
   try {
-    writeFileSync(join(claudePath, "synapse.status"), status);
+    writeFileSync(join(agentPath, "synapse.status"), status);
   } catch {}
 }
 
-function getResumeContext(claudePath: string): string {
-  const file = join(claudePath, "last-run-output.txt");
+function getResumeContext(agentPath: string): string {
+  const file = join(agentPath, "last-run-output.txt");
   if (!existsSync(file)) return "";
   try {
     return readFileSync(file, "utf-8").trim();
@@ -43,9 +43,9 @@ function getResumeContext(claudePath: string): string {
   }
 }
 
-function saveLastOutput(claudePath: string, output: string): void {
+function saveLastOutput(agentPath: string, output: string): void {
   try {
-    writeFileSync(join(claudePath, "last-run-output.txt"), output);
+    writeFileSync(join(agentPath, "last-run-output.txt"), output);
   } catch {}
 }
 
@@ -113,7 +113,7 @@ function buildPrompt(
 }
 
 async function executeClaudeRun(state: SynapseState): Promise<void> {
-  const { config, claudePath, workingDir, pendingMessages, store } = state;
+  const { config, agentPath, workingDir, pendingMessages, store } = state;
 
   if (pendingMessages.length === 0) return;
 
@@ -127,7 +127,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
 
   if (messages.length === 0) return;
 
-  setStatus(claudePath, "running");
+  setStatus(agentPath, "running");
   state.running = true;
 
   // Store incoming messages in conversation.db
@@ -141,7 +141,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
     });
   }
 
-  const resumeContext = getResumeContext(claudePath);
+  const resumeContext = getResumeContext(agentPath);
   const systemPrompt = buildSystemPrompt(config, resumeContext);
   const userPrompt = buildPrompt(state, messages, resumeContext);
 
@@ -156,7 +156,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       `${process.env.HOME}/.local/bin/claude`;
 
     // Write MCP config pointing to SSE endpoint on system-service
-    const mcpConfigPath = join(state.claudePath, "mcp-config.json");
+    const mcpConfigPath = join(state.agentPath, "mcp-config.json");
     const mcpConfig = {
       mcpServers: {
         unguibus: {
@@ -220,18 +220,18 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       });
 
       // Save for resume context
-      saveLastOutput(state.claudePath, output);
+      saveLastOutput(state.agentPath, output);
 
       console.log(
         `[synapse] ${config.name} responded (${output.length} chars)`
       );
     }
 
-    setStatus(state.claudePath, "idle");
+    setStatus(state.agentPath, "idle");
   } catch (err: any) {
     console.error(`[synapse] Error running Claude for ${config.name}: ${err.message}`);
-    setStatus(state.claudePath, "error");
-    saveLastOutput(state.claudePath, `Error: ${err.message}`);
+    setStatus(state.agentPath, "error");
+    saveLastOutput(state.agentPath, `Error: ${err.message}`);
   } finally {
     state.running = false;
     state.proc = null;
@@ -247,7 +247,7 @@ function scheduleBatch(state: SynapseState): void {
   const delay = state.config.executionDelay;
   console.log(`[synapse] Scheduling batch for ${state.config.name} in ${delay}ms`);
 
-  setStatus(state.claudePath, "waiting");
+  setStatus(state.agentPath, "waiting");
 
   state.batchTimer = setTimeout(async () => {
     console.log(`[synapse] Batch timer fired for ${state.config.name}`);
@@ -263,13 +263,13 @@ export function initSynapse(
   workingDir: string,
   config: AgentConfig
 ): void {
-  const cPath = claudeDir(workingDir);
+  const cPath = agentDataDir(workingDir);
   const store = initAgentStore(cPath);
 
   const state: SynapseState = {
     config,
     workingDir,
-    claudePath: cPath,
+    agentPath: cPath,
     store,
     batchTimer: null,
     pendingMessages: [],

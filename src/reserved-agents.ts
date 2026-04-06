@@ -60,9 +60,9 @@ export function ensureReservedAgent(agentId: string): boolean {
 
   const spec = RESERVED_AGENTS[agentId];
   const agentDir = join(UNASSIGNED_DIR, `reserved-${agentId}`);
-  const claudeDir = join(agentDir, ".claude");
+  const unguibusDir = join(agentDir, ".unguibus");
 
-  mkdirSync(claudeDir, { recursive: true });
+  mkdirSync(unguibusDir, { recursive: true });
 
   const config: AgentConfig = {
     id: agentId,
@@ -75,18 +75,18 @@ export function ensureReservedAgent(agentId: string): boolean {
   };
 
   // Write agent.json
-  writeFileSync(join(claudeDir, "agent.json"), JSON.stringify(config, null, 2));
+  writeFileSync(join(unguibusDir, "agent.json"), JSON.stringify(config, null, 2));
 
   // Write system prompt as CLAUDE.md so Claude sees it
   const systemPrompt =
     agentId === AGENT_OPERATOR ? OPERATOR_SYSTEM_PROMPT : SECURITY_SYSTEM_PROMPT;
-  writeFileSync(join(claudeDir, "CLAUDE.md"), systemPrompt);
+  writeFileSync(join(unguibusDir, "CLAUDE.md"), systemPrompt);
 
-  if (!existsSync(join(claudeDir, "synapse.status"))) {
-    writeFileSync(join(claudeDir, "synapse.status"), "idle");
+  if (!existsSync(join(unguibusDir, "synapse.status"))) {
+    writeFileSync(join(unguibusDir, "synapse.status"), "idle");
   }
-  if (!existsSync(join(claudeDir, "last-run-output.txt"))) {
-    writeFileSync(join(claudeDir, "last-run-output.txt"), "");
+  if (!existsSync(join(unguibusDir, "last-run-output.txt"))) {
+    writeFileSync(join(unguibusDir, "last-run-output.txt"), "");
   }
 
   // Register IAM

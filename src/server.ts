@@ -202,14 +202,14 @@ async function handleRequest(req: Request): Promise<Response> {
     return (async () => {
       const agentId = path.split("/")[2];
       const body = await parseBody(req);
-      if (!body?.claudePath) return json({ error: "Missing 'claudePath'" }, 400);
+      if (!body?.agentPath) return json({ error: "Missing 'agentPath'" }, 400);
 
       const callerId = getCallerId(req);
       if (!hasPermission(callerId, "agent.fork")) {
         return json({ error: "No agent.fork permission" }, 403);
       }
 
-      const result = forkAgent(agentId, body.claudePath);
+      const result = forkAgent(agentId, body.agentPath);
       return json(result, result.success ? 201 : 400);
     })();
   }
@@ -240,7 +240,7 @@ async function handleRequest(req: Request): Promise<Response> {
         return json({ error: "No agent.offboard permission" }, 403);
       }
 
-      const result = offboardAgent(agentId, agent.claudePath);
+      const result = offboardAgent(agentId, agent.agentPath);
       return json(result, result.success ? 200 : 400);
     })();
   }
