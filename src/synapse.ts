@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { join } from "path";
 import type { AgentConfig, Message } from "./types";
 import { AGENTS_DIR, getEffectiveDir } from "./types";
@@ -15,7 +15,8 @@ import {
 interface SynapseState {
   config: AgentConfig;
   agentPath: string;
-  lastAckTimestamp: number;
+  ackedUpTo: number;     // messages up to this timestamp have been processed
+  lastRunAt: number;     // when we last successfully ran Claude (for session activity check)
   running: boolean;
   stopped: boolean;
   proc: ReturnType<typeof Bun.spawn> | null;
@@ -38,6 +39,21 @@ function saveLastOutput(agentPath: string, output: string): void {
   try {
     writeFileSync(join(agentPath, "last-run-output.txt"), output);
   } catch {}
+}
+
+function isSessionActive(config: AgentConfig, lastRunAt: number): boolean {
+  if (!config.sessionId) return false;
+  const dir = getEffectiveDir(config);
+  const projectName = dir.replace(/\//g, "-");
+  const sessionFile = join(
+    process.env.HOME || "~", ".claude", "projects", projectName, `${config.sessionId}.jsonl`
+  );
+  try {
+    const mtime = statSync(sessionFile).mtimeMs;
+    return mtime > lastRunAt;
+  } catch {
+    return false;
+  }
 }
 
 function buildSystemPrompt(config: AgentConfig): string {
@@ -82,12 +98,12 @@ export function deliverToInbox(agentId: string, msg: Message): void {
 
 export function fetchNewAndAck(agentId: string): Message[] {
   const state = synapses.get(agentId);
-  const since = state?.lastAckTimestamp ?? 0;
+  const since = state?.ackedUpTo ?? 0;
   const rows = getInboxSince(agentId, since);
   if (rows.length > 0 && state) {
     const maxTs = Math.max(...rows.map(r => r.timestamp));
     ackInbox(agentId, maxTs);
-    state.lastAckTimestamp = maxTs;
+    state.ackedUpTo = maxTs;
   }
   return rows.map(r => ({ to: agentId, from: r.from, type: r.type, body: r.body, timestamp: r.timestamp }));
 }
@@ -96,6 +112,12 @@ export function fetchNewAndAck(agentId: string): Message[] {
 
 async function runClaude(state: SynapseState, messages: Message[]): Promise<boolean> {
   const { config, agentPath } = state;
+
+  // Check if session is active (someone else is using it)
+  if (isSessionActive(config, state.lastRunAt)) {
+    console.log(`[synapse] Session active for ${config.name}, skipping`);
+    return false;
+  }
 
   setStatus(agentPath, "running");
   state.running = true;
@@ -159,26 +181,11 @@ async function runClaude(state: SynapseState, messages: Message[]): Promise<bool
 
     state.proc = proc;
 
-    // Session-busy detection: 10s timeout
-    let timedOut = false;
-    const busyTimer = setTimeout(() => {
-      timedOut = true;
-      proc.kill("SIGTERM");
-    }, 10000);
-
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
     await proc.exited;
-    clearTimeout(busyTimer);
 
     state.proc = null;
-
-    if (timedOut) {
-      console.log(`[synapse] Session busy for ${config.name}, will retry`);
-      setStatus(agentPath, "idle");
-      state.running = false;
-      return false; // Don't ack — retry later
-    }
 
     if (stderr && !stdout) {
       console.error(`[synapse] Claude error for ${config.name}: ${stderr.slice(0, 200)}`);
@@ -213,6 +220,7 @@ async function runClaude(state: SynapseState, messages: Message[]): Promise<bool
 
     setStatus(agentPath, "idle");
     state.running = false;
+    state.lastRunAt = Date.now();
     return true; // Success — ack messages
 
   } catch (err: any) {
@@ -235,7 +243,7 @@ async function synapseLoop(state: SynapseState): Promise<void> {
 
   while (!state.stopped) {
     // Fetch new messages since last ack
-    const rows = getInboxSince(config.id, state.lastAckTimestamp);
+    const rows = getInboxSince(config.id, state.ackedUpTo);
     const messages: Message[] = rows.map(r => ({ to: config.id, from: r.from, type: r.type, body: r.body, timestamp: r.timestamp }));
 
     if (messages.length > 0) {
@@ -245,7 +253,7 @@ async function synapseLoop(state: SynapseState): Promise<void> {
       if (success) {
         const maxTs = Math.max(...messages.map(m => m.timestamp));
         ackInbox(config.id, maxTs);
-        state.lastAckTimestamp = maxTs;
+        state.ackedUpTo = maxTs;
       } else {
         // Error or session busy — wait longer before retry
         await sleep(errorRetryInterval);
@@ -272,7 +280,7 @@ export function initSynapse(agentId: string, config: AgentConfig): void {
   const state: SynapseState = {
     config,
     agentPath,
-    lastAckTimestamp: Date.now(), // Start from now — don't process old messages
+    ackedUpTo: Date.now(), lastRunAt: Date.now(), // Start from now — don't process old messages
     running: false,
     stopped: false,
     proc: null,
