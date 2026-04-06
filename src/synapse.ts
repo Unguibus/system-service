@@ -182,9 +182,9 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       "mcp__unguibus__send_to_operator",
     ];
 
-    // Resume previous session if available
+    // Resume previous session if available (fork to avoid conflicts with active sessions)
     if (config.sessionId) {
-      args.push("--resume", config.sessionId);
+      args.push("--resume", config.sessionId, "--fork-session");
     }
 
     // Add system prompt
