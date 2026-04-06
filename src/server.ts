@@ -372,6 +372,7 @@ async function handleRequest(req: Request): Promise<Response> {
 export function startServer(): void {
   Bun.serve({
     port: PORT,
+    idleTimeout: 0,
     fetch: handleRequest,
   });
   console.log(`[server] System service listening on port ${PORT}`);
