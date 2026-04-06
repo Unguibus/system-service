@@ -114,6 +114,7 @@ export function onboardAgent(targetDir: string): LifecycleResult & { agentId?: s
 }
 
 // 3.3 Assign — move unassigned agent into a target directory
+// If the target already has a .claude/, onboard it first then unassign it
 export function assignAgent(agentId: string, targetDir: string): LifecycleResult {
   const srcClaudeDir = join(UNASSIGNED_DIR, agentId, ".claude");
   const destClaudeDir = join(targetDir, ".claude");
@@ -121,8 +122,26 @@ export function assignAgent(agentId: string, targetDir: string): LifecycleResult
   if (!existsSync(srcClaudeDir)) {
     return { success: false, agentId, error: "Agent not found in unassigned" };
   }
+
+  // If target already has a .claude/, handle the existing agent
   if (existsSync(destClaudeDir)) {
-    return { success: false, agentId, error: "Target directory already has an agent" };
+    const existingConfig = readAgentJson(destClaudeDir);
+    if (existingConfig?.id) {
+      // Already managed — unassign it
+      const unassignResult = unassignAgent(existingConfig.id, targetDir);
+      if (!unassignResult.success) {
+        return { success: false, agentId, error: `Failed to unassign existing agent: ${unassignResult.error}` };
+      }
+    } else {
+      // Not managed — onboard first, then unassign
+      const onboardResult = onboardAgent(targetDir);
+      if (onboardResult.success && onboardResult.agentId) {
+        const unassignResult = unassignAgent(onboardResult.agentId, targetDir);
+        if (!unassignResult.success) {
+          return { success: false, agentId, error: `Failed to unassign onboarded agent: ${unassignResult.error}` };
+        }
+      }
+    }
   }
 
   stopAgent(agentId);
