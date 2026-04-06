@@ -167,11 +167,17 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
     };
     writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig));
 
+    // Check for saved session ID for --resume
+    const sessionFile = join(agentPath, "session-id.txt");
+    const savedSessionId = existsSync(sessionFile)
+      ? readFileSync(sessionFile, "utf-8").trim()
+      : null;
+
     const args = [
       claudePath_exec,
       "--model", config.model,
       "--print",
-      "--output-format", "text",
+      "--output-format", "json",
       "--max-turns", String(config.maxTurns || 25),
       "--mcp-config", mcpConfigPath,
       "--allowedTools",
@@ -182,12 +188,22 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       "mcp__unguibus__send_to_operator",
     ];
 
+    // Resume previous session if available
+    if (savedSessionId) {
+      args.push("--resume", savedSessionId);
+    }
+
     // Add system prompt
     args.push("--system-prompt", systemPrompt);
 
-    // Spawn Claude with cwd = assignedDir (the working directory)
+    // If assigned to a project, add it as a context directory
+    if (config.assignedDir) {
+      args.push("--add-dir", config.assignedDir);
+    }
+
+    // Run from agent's home dir (session lives here), not the project dir
     const proc = Bun.spawn(args, {
-      cwd: getEffectiveDir(config),
+      cwd: agentPath,
       stdin: new Blob([userPrompt]),
       stdout: "pipe",
       stderr: "pipe",
@@ -208,7 +224,20 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       console.error(`[synapse] Claude error for ${config.name}: ${stderr.slice(0, 200)}`);
     }
 
-    const output = stdout.trim();
+    // Parse JSON output to get session_id and result
+    let output = "";
+    let sessionId = savedSessionId;
+    try {
+      const jsonOut = JSON.parse(stdout);
+      output = jsonOut.result || "";
+      if (jsonOut.session_id) {
+        sessionId = jsonOut.session_id;
+        writeFileSync(sessionFile, sessionId);
+      }
+    } catch {
+      // Fallback: treat as plain text if JSON parse fails
+      output = stdout.trim();
+    }
 
     if (output) {
       // Store response in conversation.db
