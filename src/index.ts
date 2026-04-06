@@ -3,6 +3,7 @@ import { UNGUIBUS_HOME, AGENTS_DIR } from "./types";
 import { discoverAgents } from "./agents";
 import { initIAM } from "./iam";
 import { startServer } from "./server";
+import { startCleanupTimer } from "./conversation-db";
 
 // Ensure required directories exist
 mkdirSync(AGENTS_DIR, { recursive: true });
@@ -18,6 +19,9 @@ discoverAgents();
 
 // Start HTTP server
 startServer();
+
+// Start conversation TTL cleanup
+startCleanupTimer();
 
 // Connect to Exchange if configured
 const exchangeUrl = process.env.EXCHANGE_URL;

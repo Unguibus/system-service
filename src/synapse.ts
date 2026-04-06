@@ -7,13 +7,11 @@ import {
   addConversationEntry,
   getRecentEntries,
   closeAgentStore,
-  type AgentStore,
 } from "./conversation-db";
 
 interface SynapseState {
   config: AgentConfig;
   agentPath: string;
-  store: AgentStore;
   lastAckTimestamp: number;
   running: boolean;
   stopped: boolean;
@@ -108,14 +106,14 @@ export function fetchNewAndAck(agentId: string): Message[] {
 // --- Claude execution ---
 
 async function runClaude(state: SynapseState, messages: Message[]): Promise<boolean> {
-  const { config, agentPath, store } = state;
+  const { config, agentPath } = state;
 
   setStatus(agentPath, "running");
   state.running = true;
 
   // Store incoming messages in conversation store
   for (const msg of messages) {
-    addConversationEntry(store, {
+    addConversationEntry(config.id, {
       type: "user",
       from: msg.from,
       to: config.id,
@@ -214,7 +212,7 @@ async function runClaude(state: SynapseState, messages: Message[]): Promise<bool
     }
 
     if (output) {
-      addConversationEntry(store, {
+      addConversationEntry(config.id, {
         type: "thought",
         from: config.name,
         message: output,
@@ -280,12 +278,11 @@ function sleep(ms: number): Promise<void> {
 
 export function initSynapse(agentId: string, config: AgentConfig): void {
   const agentPath = agentDataDir(agentId);
-  const store = initAgentStore(agentPath);
+  initAgentStore(agentId);
 
   const state: SynapseState = {
     config,
     agentPath,
-    store,
     lastAckTimestamp: Date.now(), // Start from now — don't process old messages
     running: false,
     stopped: false,
@@ -311,7 +308,7 @@ export function stopSynapse(agentId: string): void {
     state.proc.kill("SIGTERM");
   }
 
-  closeAgentStore(state.store);
+  closeAgentStore(state.config.id);
   synapses.delete(agentId);
   console.log(`[synapse] Stopped for ${state.config.name} (${agentId})`);
 }
@@ -329,13 +326,11 @@ export function addToAgentConversation(agentId: string, entry: {
 }): void {
   const state = synapses.get(agentId);
   if (!state) return;
-  addConversationEntry(state.store, entry as any);
+  addConversationEntry(agentId, entry as any);
 }
 
 export function getAgentConversations(agentId: string, limit: number = 50): any[] | null {
-  const state = synapses.get(agentId);
-  if (!state) return null;
-  return getRecentEntries(state.store, limit);
+  return getRecentEntries(agentId, limit);
 }
 
 export function isSynapseRunning(agentId: string): boolean {
