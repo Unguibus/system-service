@@ -150,7 +150,6 @@ async function runClaude(state: SynapseState, messages: Message[]): Promise<bool
     "mcp__unguibus__get_agent",
     "mcp__unguibus__get_exchange_status",
     "mcp__unguibus__send_to_operator",
-    "mcp__unguibus__fetch_new_and_ack",
   ];
 
   if (config.sessionId) {
