@@ -5,6 +5,7 @@ import { createHash } from "crypto";
 import type { AgentConfig, AgentState, LifecycleResult } from "./types";
 import { UNASSIGNED_DIR, OFFBOARDED_DIR } from "./types";
 import { stopAgent, startAgent } from "./runtime";
+import { registerAgentIAM, updateAgentWorkingDir } from "./iam";
 
 function generateAgentId(name: string): string {
   const nonce = randomUUID();
@@ -61,7 +62,8 @@ export function createAgent(opts: {
   writeFileSync(join(claudeDir, "synapse.status"), "idle");
   writeFileSync(join(claudeDir, "last-run-output.txt"), "");
 
-  // Start the agent
+  // Register and start the agent
+  registerAgentIAM(id, config.name, "agent", "system", agentDir);
   startAgent(id, agentDir, config);
 
   return { success: true, agentId: id };
@@ -102,6 +104,7 @@ export function onboardAgent(targetDir: string): LifecycleResult & { agentId?: s
     writeFileSync(join(claudeDir, "last-run-output.txt"), "");
   }
 
+  registerAgentIAM(id, config.name, "agent", "system", targetDir);
   startAgent(id, targetDir, config);
 
   return { success: true, agentId: id };
@@ -130,6 +133,7 @@ export function assignAgent(agentId: string, targetDir: string): LifecycleResult
 
   const config = readAgentJson(destClaudeDir);
   if (config) {
+    updateAgentWorkingDir(agentId, targetDir);
     startAgent(agentId, targetDir, config);
   }
 
@@ -152,6 +156,7 @@ export function unassignAgent(agentId: string, currentDir: string): LifecycleRes
 
   const config = readAgentJson(destClaudeDir);
   if (config) {
+    updateAgentWorkingDir(agentId, destDir);
     startAgent(agentId, destDir, config);
   }
 

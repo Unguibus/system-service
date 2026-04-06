@@ -58,10 +58,16 @@ export function initIAM(): void {
       agent_id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'agent',
+      working_dir TEXT,
       created_at INTEGER NOT NULL,
       created_by TEXT NOT NULL
     )
   `);
+
+  // Migration: add working_dir if missing
+  try {
+    db.exec("ALTER TABLE agents ADD COLUMN working_dir TEXT");
+  } catch {}  // Column already exists
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS permissions (
@@ -129,11 +135,12 @@ export function registerAgentIAM(
   agentId: string,
   name: string,
   role: string,
-  createdBy: string
+  createdBy: string,
+  workingDir?: string
 ): void {
   db.prepare(
-    "INSERT OR REPLACE INTO agents (agent_id, name, role, created_at, created_by) VALUES (?, ?, ?, ?, ?)"
-  ).run(agentId, name, role, Date.now(), createdBy);
+    "INSERT OR REPLACE INTO agents (agent_id, name, role, working_dir, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(agentId, name, role, workingDir ?? null, Date.now(), createdBy);
 
   // Apply role template permissions
   const templatePerms = db
@@ -150,6 +157,14 @@ export function registerAgentIAM(
   }
 
   auditLog(createdBy, "register", agentId, null, `Role: ${role}`);
+}
+
+export function updateAgentWorkingDir(agentId: string, workingDir: string | null): void {
+  db.prepare("UPDATE agents SET working_dir = ? WHERE agent_id = ?").run(workingDir, agentId);
+}
+
+export function getAllRegisteredAgents(): Array<{ agent_id: string; name: string; working_dir: string | null }> {
+  return db.prepare("SELECT agent_id, name, working_dir FROM agents").all() as any[];
 }
 
 export function getEffectivePermissions(agentId: string): Permission[] {

@@ -4,7 +4,7 @@ import type { AgentConfig, AgentState } from "./types";
 import { UNASSIGNED_DIR, OFFBOARDED_DIR } from "./types";
 import { getAgentStatus } from "./runtime";
 import { startAgent } from "./runtime";
-import { registerAgentIAM } from "./iam";
+import { registerAgentIAM, updateAgentWorkingDir, getAllRegisteredAgents } from "./iam";
 
 // Registry: maps agentId -> current working directory
 const registry = new Map<string, string>();
@@ -89,9 +89,9 @@ export function updateAgentConfig(
   return getAgent(agentId);
 }
 
-// Scan filesystem to discover agents on startup
+// Scan filesystem and database to discover agents on startup
 export function discoverAgents(): void {
-  // Scan unassigned
+  // 1. Scan unassigned directory
   if (existsSync(UNASSIGNED_DIR)) {
     for (const entry of readdirSync(UNASSIGNED_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -100,11 +100,27 @@ export function discoverAgents(): void {
       if (!existsSync(join(claudePath, "agent.json"))) continue;
 
       const config = readAgentConfig(claudePath);
-      if (config) {
+      if (config && !registry.has(config.id)) {
         registry.set(config.id, agentDir);
-        registerAgentIAM(config.id, config.name, "agent", "system");
+        registerAgentIAM(config.id, config.name, "agent", "system", agentDir);
         startAgent(config.id, agentDir, config);
       }
+    }
+  }
+
+  // 2. Load assigned agents from IAM database
+  const registered = getAllRegisteredAgents();
+  for (const agent of registered) {
+    if (registry.has(agent.agent_id)) continue; // Already loaded
+    if (!agent.working_dir) continue;
+
+    const claudePath = join(agent.working_dir, ".claude");
+    if (!existsSync(join(claudePath, "agent.json"))) continue;
+
+    const config = readAgentConfig(claudePath);
+    if (config) {
+      registry.set(config.id, agent.working_dir);
+      startAgent(config.id, agent.working_dir, config);
     }
   }
 
