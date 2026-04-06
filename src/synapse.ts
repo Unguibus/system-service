@@ -158,6 +158,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
     const mcpConfig = {
       mcpServers: {
         unguibus: {
+          type: "sse",
           url: `http://localhost:7272/mcp/${config.id}/sse`,
         },
       },
@@ -230,13 +231,18 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
 }
 
 function scheduleBatch(state: SynapseState): void {
-  if (state.batchTimer) return; // Already scheduled
+  if (state.batchTimer) {
+    console.log(`[synapse] Batch already scheduled for ${state.config.name}`);
+    return;
+  }
 
   const delay = state.config.executionDelay;
+  console.log(`[synapse] Scheduling batch for ${state.config.name} in ${delay}ms`);
 
   setStatus(state.claudePath, "waiting");
 
   state.batchTimer = setTimeout(async () => {
+    console.log(`[synapse] Batch timer fired for ${state.config.name}`);
     state.batchTimer = null;
     await executeClaudeRun(state);
   }, delay);
@@ -276,6 +282,7 @@ export function deliverToSynapse(agentId: string, msg: Message): void {
   }
 
   state.pendingMessages.push(msg);
+  console.log(`[synapse] Delivered to ${state.config.name}, pending: ${state.pendingMessages.length}, running: ${state.running}, batchTimer: ${!!state.batchTimer}`);
 
   // If not currently running, schedule batch
   if (!state.running) {
