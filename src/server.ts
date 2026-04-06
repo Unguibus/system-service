@@ -120,6 +120,17 @@ async function handleRequest(req: Request): Promise<Response> {
     return json(agent);
   }
 
+  // GET /agents/:id/inbox — peek at pending messages (no ack)
+  if (method === "GET" && path.match(/^\/agents\/[^/]+\/inbox$/)) {
+    const agentId = path.split("/")[2];
+    const { getInboxSince } = await import("./conversation-db");
+    const { getSynapseState } = await import("./synapse");
+    const state = getSynapseState(agentId);
+    const since = state?.ackedUpTo ?? 0;
+    const messages = getInboxSince(agentId, since);
+    return json(messages);
+  }
+
   // GET /agents/:id/conversations — read conversation history
   if (method === "GET" && path.match(/^\/agents\/[^/]+\/conversations$/)) {
     const agentId = path.split("/")[2];
