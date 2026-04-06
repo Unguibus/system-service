@@ -12,6 +12,7 @@ import {
 } from "./lifecycle";
 import { stopAgent } from "./runtime";
 import { ensureReservedAgent, isReservedAgent } from "./reserved-agents";
+import { getAgentConversations } from "./synapse";
 import {
   hasPermission,
   getEffectivePermissions,
@@ -115,6 +116,15 @@ function handleRequest(req: Request): Response | Promise<Response> {
     const agent = getAgent(agentId);
     if (!agent) return json({ error: "Agent not found" }, 404);
     return json(agent);
+  }
+
+  // GET /agents/:id/conversations — read conversation history
+  if (method === "GET" && path.match(/^\/agents\/[^/]+\/conversations$/)) {
+    const agentId = path.split("/")[2];
+    const limit = parseInt(url.searchParams.get("limit") ?? "50");
+    const entries = getAgentConversations(agentId, limit);
+    if (!entries) return json({ error: "Agent not running" }, 404);
+    return json(entries);
   }
 
   // PATCH /agents/:id — update agent config

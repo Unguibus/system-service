@@ -292,6 +292,12 @@ export function getSynapseState(agentId: string): SynapseState | undefined {
   return synapses.get(agentId);
 }
 
+export function getAgentConversations(agentId: string, limit: number = 50): any[] | null {
+  const state = synapses.get(agentId);
+  if (!state) return null;
+  return getRecentEntries(state.db, limit).reverse();
+}
+
 export function isSynapseRunning(agentId: string): boolean {
   const state = synapses.get(agentId);
   return state?.running ?? false;
