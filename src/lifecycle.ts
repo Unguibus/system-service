@@ -1,7 +1,8 @@
-import { mkdirSync, cpSync, existsSync, readFileSync, writeFileSync, appendFileSync } from "fs";
-import { join } from "path";
+import { mkdirSync, cpSync, existsSync, readFileSync, readdirSync, writeFileSync, appendFileSync, statSync } from "fs";
+import { join, basename } from "path";
 import { randomUUID } from "crypto";
 import { createHash } from "crypto";
+import { execSync } from "child_process";
 import type { AgentConfig, LifecycleResult } from "./types";
 import { AGENTS_DIR } from "./types";
 import { stopAgent, startAgent } from "./runtime";
@@ -87,56 +88,105 @@ export function createAgent(opts: {
   return { success: true, agentId: id };
 }
 
-// Onboard — bring existing .unguibus/agent.json under management
-export function onboardAgent(targetDir: string): LifecycleResult & { agentId?: string } {
-  const localAgentJson = join(targetDir, ".unguibus", "agent.json");
-  if (!existsSync(localAgentJson)) {
-    return { success: false, agentId: "", error: "No .unguibus/agent.json found in target directory" };
-  }
+// Convert a directory path to Claude's project folder name
+function dirToClaudeProjectName(dir: string): string {
+  return dir.replace(/\//g, "-");
+}
 
-  let partialConfig: Partial<AgentConfig>;
+// Find all Claude sessions for a directory
+function findClaudeSessions(targetDir: string): Array<{ sessionId: string; mtime: number }> {
+  const projectName = dirToClaudeProjectName(targetDir);
+  const projectDir = join(process.env.HOME || "~", ".claude", "projects", projectName);
+
+  if (!existsSync(projectDir)) return [];
+
+  return readdirSync(projectDir)
+    .filter(f => f.endsWith(".jsonl"))
+    .map(f => ({
+      sessionId: basename(f, ".jsonl"),
+      mtime: statSync(join(projectDir, f)).mtimeMs,
+    }))
+    .sort((a, b) => b.mtime - a.mtime); // newest first
+}
+
+// Ask a session what its name should be
+function askSessionForName(sessionId: string, targetDir: string): string {
+  const claudePath = process.env.CLAUDE_PATH ?? `${process.env.HOME}/.local/bin/claude`;
+
   try {
-    partialConfig = JSON.parse(readFileSync(localAgentJson, "utf-8"));
+    const result = execSync(
+      `echo "You are being onboarded into a new agent management system. Respond with ONLY a short name for yourself (2-4 words, no quotes, no explanation). Base it on what you were working on." | ${claudePath} --print --resume ${sessionId} --model haiku --max-turns 1 --output-format text`,
+      {
+        cwd: targetDir,
+        timeout: 30000,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }
+    );
+    const name = result.trim().replace(/["\n]/g, "").slice(0, 50);
+    return name || "unnamed-agent";
   } catch {
-    return { success: false, agentId: "", error: "Invalid agent.json in target directory" };
+    return "unnamed-agent";
+  }
+}
+
+// Onboard — discover all Claude sessions for a directory and create agents
+export async function onboardAgent(targetDir: string): Promise<LifecycleResult & { agentIds?: string[] }> {
+  if (!existsSync(targetDir)) {
+    return { success: false, agentId: "", error: "Directory not found" };
   }
 
-  const name = partialConfig.name ?? targetDir.split("/").pop() ?? "unnamed";
-  const id = partialConfig.id ?? generateAgentId(name);
-  const agentDir = agentHomeDir(id);
-
-  mkdirSync(agentDir, { recursive: true });
-
-  const config: AgentConfig = {
-    id,
-    name,
-    tags: partialConfig.tags ?? [],
-    model: partialConfig.model ?? "haiku",
-    effort: partialConfig.effort ?? "low",
-    executionDelay: partialConfig.executionDelay ?? 2000,
-    maxContextSize: partialConfig.maxContextSize ?? 5,
-    maxTurns: partialConfig.maxTurns ?? 25,
-    assignedDir: targetDir,
-    archived: false,
-  };
-
-  writeAgentJson(agentDir, config);
-
-  if (!existsSync(join(agentDir, "synapse.status"))) {
-    writeFileSync(join(agentDir, "synapse.status"), "idle");
-  }
-  if (!existsSync(join(agentDir, "last-run-output.txt"))) {
-    writeFileSync(join(agentDir, "last-run-output.txt"), "");
+  const sessions = findClaudeSessions(targetDir);
+  if (sessions.length === 0) {
+    return { success: false, agentId: "", error: "No Claude sessions found for this directory" };
   }
 
   // Create .unguibus dir in target and add to gitignore
   mkdirSync(join(targetDir, ".unguibus"), { recursive: true });
   ensureGitignore(targetDir);
 
-  registerAgentIAM(config.id, config.name, "agent", "system", config.assignedDir);
-  startAgent(config.id, config);
+  const agentIds: string[] = [];
 
-  return { success: true, agentId: config.id };
+  for (const session of sessions) {
+    const id = session.sessionId; // Use session ID as agent ID
+
+    // Skip if already onboarded
+    const agentDir = agentHomeDir(id);
+    if (existsSync(join(agentDir, "agent.json"))) {
+      agentIds.push(id);
+      continue;
+    }
+
+    console.log(`[onboard] Asking session ${id} for its name...`);
+    const name = askSessionForName(id, targetDir);
+    console.log(`[onboard] Session ${id} → "${name}"`);
+
+    mkdirSync(agentDir, { recursive: true });
+
+    const config: AgentConfig = {
+      id,
+      name,
+      tags: ["onboarded"],
+      model: "haiku",
+      effort: "low",
+      executionDelay: 2000,
+      maxContextSize: 5,
+      maxTurns: 25,
+      assignedDir: targetDir,
+      archived: false,
+    };
+
+    writeAgentJson(agentDir, config);
+    writeFileSync(join(agentDir, "session-id.txt"), id);
+    writeFileSync(join(agentDir, "synapse.status"), "idle");
+    writeFileSync(join(agentDir, "last-run-output.txt"), "");
+
+    registerAgentIAM(id, name, "agent", "system", targetDir);
+    startAgent(id, config);
+    agentIds.push(id);
+  }
+
+  return { success: true, agentId: agentIds[0] || "", agentIds };
 }
 
 // Assign — point agent at a target directory

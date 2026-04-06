@@ -221,7 +221,7 @@ async function handleRequest(req: Request): Promise<Response> {
         return json({ error: "No agent.onboard permission" }, 403);
       }
 
-      const result = onboardAgent(body.targetDir);
+      const result = await onboardAgent(body.targetDir);
       return json(result, result.success ? 201 : 400);
     })();
   }
