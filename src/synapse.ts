@@ -172,6 +172,12 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       "--output-format", "text",
       "--max-turns", String(config.maxTurns || 25),
       "--mcp-config", mcpConfigPath,
+      "--allowedTools",
+      "mcp__unguibus__send_message",
+      "mcp__unguibus__list_agents",
+      "mcp__unguibus__get_agent",
+      "mcp__unguibus__get_exchange_status",
+      "mcp__unguibus__send_to_operator",
     ];
 
     // Add system prompt
