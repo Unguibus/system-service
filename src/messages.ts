@@ -1,18 +1,23 @@
 import type { Message } from "./types";
-import { AGENT_OPERATOR, AGENT_USER, AGENT_SECURITY } from "./types";
-
-// In-memory message queue per agent (delivered on next Synapse batch)
-const queues = new Map<string, Message[]>();
+import { AGENT_OPERATOR, AGENT_USER } from "./types";
+import { deliverToSynapse } from "./synapse";
+import { getAgentWorkingDir } from "./agents";
 
 // Callback for cross-host delivery (set when Exchange is connected)
 let crossHostSend: ((msg: Message) => void) | null = null;
+
+// Callback for delivering to user (ID 1) — set by Electron app or console
+let userMessageHandler: ((msg: Message) => void) | null = null;
+
+// In-memory queue for messages to agents not yet initialized
+const pendingQueues = new Map<string, Message[]>();
 
 export function setCrossHostSender(fn: (msg: Message) => void): void {
   crossHostSend = fn;
 }
 
-function isLocalAddress(address: string): boolean {
-  return !address.includes("@");
+export function setUserMessageHandler(fn: (msg: Message) => void): void {
+  userMessageHandler = fn;
 }
 
 function parseAddress(address: string): { agentId: string; hostId?: string } {
@@ -35,35 +40,58 @@ export function routeMessage(msg: Message): { delivered: boolean; error?: string
     return { delivered: true };
   }
 
-  // Local delivery: queue for the target agent
-  enqueueLocal(agentId, msg);
-  return { delivered: true };
-}
-
-function enqueueLocal(agentId: string, msg: Message): void {
-  if (!queues.has(agentId)) {
-    queues.set(agentId, []);
+  // Local delivery to user (ID 1)
+  if (agentId === AGENT_USER) {
+    if (userMessageHandler) {
+      userMessageHandler(msg);
+    } else {
+      console.log(`[msg→user] From ${msg.from}: ${msg.body}`);
+    }
+    return { delivered: true };
   }
-  queues.get(agentId)!.push(msg);
+
+  // Local delivery to agent
+  const workingDir = getAgentWorkingDir(agentId);
+  if (workingDir) {
+    deliverToSynapse(agentId, msg);
+    return { delivered: true };
+  }
+
+  // Agent not found — route to Operator
+  if (agentId !== AGENT_OPERATOR) {
+    console.log(`[msg] Agent ${agentId} unknown, routing to Operator`);
+    const operatorDir = getAgentWorkingDir(AGENT_OPERATOR);
+    if (operatorDir) {
+      const rerouted: Message = {
+        ...msg,
+        body: `[Rerouted: original to=${msg.to}] ${msg.body}`,
+      };
+      deliverToSynapse(AGENT_OPERATOR, rerouted);
+      return { delivered: true };
+    }
+  }
+
+  // Queue for later if agent not yet started
+  if (!pendingQueues.has(agentId)) {
+    pendingQueues.set(agentId, []);
+  }
+  pendingQueues.get(agentId)!.push(msg);
+  return { delivered: true };
 }
 
 // Called by Synapse loop to drain pending messages
 export function drainMessages(agentId: string): Message[] {
-  const msgs = queues.get(agentId) ?? [];
-  queues.set(agentId, []);
+  const msgs = pendingQueues.get(agentId) ?? [];
+  pendingQueues.set(agentId, []);
   return msgs;
 }
 
 // Deliver incoming cross-host message to local agent
 export function deliverFromExchange(msg: Message): void {
   const { agentId } = parseAddress(msg.to);
-  const localId = agentId; // Strip host from address for local delivery
-
-  // If agent unknown locally, route to Operator
-  // TODO: Check agent registry
-  enqueueLocal(localId, msg);
+  routeMessage({ ...msg, to: agentId }); // Strip host, deliver locally
 }
 
 export function getQueueDepth(agentId: string): number {
-  return queues.get(agentId)?.length ?? 0;
+  return pendingQueues.get(agentId)?.length ?? 0;
 }

@@ -3,6 +3,8 @@ import { join } from "path";
 import type { AgentConfig, AgentState } from "./types";
 import { UNASSIGNED_DIR, OFFBOARDED_DIR } from "./types";
 import { getAgentStatus } from "./runtime";
+import { startAgent } from "./runtime";
+import { registerAgentIAM } from "./iam";
 
 // Registry: maps agentId -> current working directory
 const registry = new Map<string, string>();
@@ -46,7 +48,7 @@ export function getAgent(agentId: string): AgentState | null {
   return {
     config,
     status: getAgentStatus(agentId) as AgentState["status"],
-    pid: null, // TODO: get from runtime
+    pid: null,
     location: agentLocation(workingDir),
     assignedPath: agentLocation(workingDir) === "assigned" ? workingDir : null,
     claudePath,
@@ -55,12 +57,10 @@ export function getAgent(agentId: string): AgentState | null {
 
 export function listAgents(): AgentState[] {
   const agents: AgentState[] = [];
-
   for (const [agentId] of registry) {
     const state = getAgent(agentId);
     if (state) agents.push(state);
   }
-
   return agents;
 }
 
@@ -70,18 +70,18 @@ export function discoverAgents(): void {
   if (existsSync(UNASSIGNED_DIR)) {
     for (const entry of readdirSync(UNASSIGNED_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const claudePath = join(UNASSIGNED_DIR, entry.name, ".claude");
+      const agentDir = join(UNASSIGNED_DIR, entry.name);
+      const claudePath = join(agentDir, ".claude");
       if (!existsSync(join(claudePath, "agent.json"))) continue;
 
       const config = readAgentConfig(claudePath);
       if (config) {
-        registry.set(config.id, join(UNASSIGNED_DIR, entry.name));
+        registry.set(config.id, agentDir);
+        registerAgentIAM(config.id, config.name, "agent", "system");
+        startAgent(config.id, agentDir, config);
       }
     }
   }
 
-  // TODO: Scan for assigned agents (need a way to track which directories have managed agents)
-  // For now, assigned agents are tracked in-memory only after onboard/assign operations
-
-  console.log(`[agents] Discovered ${registry.size} agent(s)`);
+  console.log(`[agents] Discovered and started ${registry.size} agent(s)`);
 }

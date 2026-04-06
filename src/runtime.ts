@@ -1,17 +1,19 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import type { AgentConfig } from "./types";
+import { initSynapse, stopSynapse, isSynapseRunning } from "./synapse";
+import { registerAgent, unregisterAgent } from "./agents";
 
-interface ManagedProcess {
-  proc: ReturnType<typeof Bun.spawn> | null;
+interface ManagedAgent {
   config: AgentConfig;
   workingDir: string;
   crashCount: number;
   lastCrashTime: number;
   intentionalStop: boolean;
+  started: boolean;
 }
 
-const processes = new Map<string, ManagedProcess>();
+const managed = new Map<string, ManagedAgent>();
 
 function claudeDir(workingDir: string): string {
   return join(workingDir, ".claude");
@@ -24,140 +26,53 @@ function setStatus(workingDir: string, status: string): void {
   } catch {}
 }
 
-function getResumeContext(workingDir: string): string {
-  const file = join(claudeDir(workingDir), "last-run-output.txt");
-  if (!existsSync(file)) return "";
-  try {
-    return readFileSync(file, "utf-8").trim();
-  } catch {
-    return "";
-  }
-}
-
-function backoffMs(crashCount: number): number {
-  if (crashCount <= 1) return 5000;
-  if (crashCount === 2) return 10000;
-  if (crashCount === 3) return 20000;
-  return 60000;
-}
-
 export function startAgent(
   agentId: string,
   workingDir: string,
   config: AgentConfig
 ): void {
-  const existing = processes.get(agentId);
-  if (existing?.proc && !existing.proc.killed) {
-    return; // Already running
-  }
+  const existing = managed.get(agentId);
+  if (existing?.started) return;
 
-  const managed: ManagedProcess = {
-    proc: null,
+  const agent: ManagedAgent = {
     config,
     workingDir,
     crashCount: existing?.crashCount ?? 0,
     lastCrashTime: existing?.lastCrashTime ?? 0,
     intentionalStop: false,
+    started: true,
   };
 
-  processes.set(agentId, managed);
-  spawnSynapse(agentId, managed);
-}
+  managed.set(agentId, agent);
+  registerAgent(agentId, workingDir);
 
-function spawnSynapse(agentId: string, managed: ManagedProcess): void {
-  const { config, workingDir } = managed;
-  const resumeContext = getResumeContext(workingDir);
+  // Initialize the Synapse runtime loop for this agent
+  initSynapse(agentId, workingDir, config);
 
-  const env: Record<string, string> = {
-    ...process.env as Record<string, string>,
-    AGENT_ID: agentId,
-    AGENT_NAME: config.name,
-    CLAUDE_MODEL: config.model,
-    CLAUDE_EFFORT: config.effort,
-    EXECUTION_DELAY: config.executionDelay.toString(),
-    MAX_CONTEXT_SIZE: config.maxContextSize.toString(),
-  };
-
-  if (resumeContext) {
-    env.RESUME_CONTEXT = resumeContext;
-  }
-
-  setStatus(workingDir, "idle");
-
-  // TODO: Replace with actual Synapse loop (SSE subscribe, batch, spawn claude)
-  // For now, this is a placeholder that starts claude in the working directory
-  const bunPath = `${process.env.HOME}/.local/bin/bun`;
-
-  console.log(`[runtime] Starting agent ${config.name} (${agentId}) in ${workingDir}`);
-
-  // The actual Synapse loop will be implemented here.
-  // For now we just track the managed process entry.
-  managed.proc = null; // Will be set when Synapse loop is implemented
-
-  // Watch for crashes
-  watchForCrash(agentId, managed);
-}
-
-function watchForCrash(agentId: string, managed: ManagedProcess): void {
-  if (!managed.proc) return;
-
-  managed.proc.exited.then((exitCode) => {
-    if (managed.intentionalStop) return;
-
-    console.log(
-      `[runtime] Agent ${managed.config.name} (${agentId}) exited with code ${exitCode}`
-    );
-
-    managed.crashCount++;
-    managed.lastCrashTime = Date.now();
-
-    // Reset crash count if agent was stable for 5 minutes
-    const timeSinceLastCrash = Date.now() - managed.lastCrashTime;
-    if (timeSinceLastCrash > 5 * 60 * 1000) {
-      managed.crashCount = 1;
-    }
-
-    const delay = backoffMs(managed.crashCount);
-    setStatus(managed.workingDir, "error");
-
-    console.log(
-      `[runtime] Restarting ${managed.config.name} in ${delay}ms (crash #${managed.crashCount})`
-    );
-
-    setTimeout(() => {
-      if (!managed.intentionalStop) {
-        spawnSynapse(agentId, managed);
-      }
-    }, delay);
-  });
+  console.log(`[runtime] Started agent ${config.name} (${agentId}) in ${workingDir}`);
 }
 
 export function stopAgent(agentId: string): void {
-  const managed = processes.get(agentId);
-  if (!managed) return;
+  const agent = managed.get(agentId);
+  if (!agent) return;
 
-  managed.intentionalStop = true;
+  agent.intentionalStop = true;
+  agent.started = false;
 
-  if (managed.proc && !managed.proc.killed) {
-    managed.proc.kill("SIGTERM");
+  stopSynapse(agentId);
+  unregisterAgent(agentId);
 
-    // Force kill after 10 seconds
-    setTimeout(() => {
-      if (managed.proc && !managed.proc.killed) {
-        managed.proc.kill("SIGKILL");
-      }
-    }, 10000);
-  }
+  setStatus(agent.workingDir, "idle");
+  managed.delete(agentId);
 
-  setStatus(managed.workingDir, "idle");
-  processes.delete(agentId);
+  console.log(`[runtime] Stopped agent ${agent.config.name} (${agentId})`);
 }
 
 export function getAgentStatus(agentId: string): string {
-  const managed = processes.get(agentId);
-  if (!managed) return "stopped";
+  const agent = managed.get(agentId);
+  if (!agent) return "stopped";
 
-  const statusFile = join(claudeDir(managed.workingDir), "synapse.status");
+  const statusFile = join(claudeDir(agent.workingDir), "synapse.status");
   if (existsSync(statusFile)) {
     try {
       return readFileSync(statusFile, "utf-8").trim();
@@ -167,10 +82,13 @@ export function getAgentStatus(agentId: string): string {
 }
 
 export function isAgentRunning(agentId: string): boolean {
-  const managed = processes.get(agentId);
-  return !!managed?.proc && !managed.proc.killed;
+  return isSynapseRunning(agentId);
 }
 
-export function getAllManagedAgents(): Map<string, ManagedProcess> {
-  return processes;
+export function getManagedAgent(agentId: string): ManagedAgent | undefined {
+  return managed.get(agentId);
+}
+
+export function getAllManagedAgents(): Map<string, ManagedAgent> {
+  return managed;
 }
