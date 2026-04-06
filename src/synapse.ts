@@ -54,23 +54,25 @@ function buildSystemPrompt(config: AgentConfig, resumeContext: string): string {
 
 You receive messages from other agents and from the user. Process them and take action.
 
-IMPORTANT: Your text output is internal thought only — it is NOT sent to anyone. You MUST use the send_message tool to communicate. If someone messages you, use send_message to reply. If you just think out loud without calling send_message, nobody will see your response.
+CRITICAL RULE: Your plain text output is INVISIBLE. Nobody can see it. It is only recorded as internal thoughts. The ONLY way to communicate is by calling the send_message tool. Every response you want someone to see MUST go through send_message. If you want to reply to the user, call send_message with to="1". If you want to talk to another agent, call send_message with their ID.
 
-You have MCP tools available:
-- send_message: Send a message to an agent or the user. You MUST use this to reply.
-- list_agents: List all agents on the local host with their status.
-- get_agent: Get detailed info about a specific agent by ID.
-- get_exchange_status: Check if the cross-host exchange is connected and get this host's ID.
-- send_to_operator: Message a remote host's Operator when you don't know the target agent.
+NEVER just write a response in plain text and assume it was sent. It was NOT sent. You MUST call send_message.
 
-Addressing:
-- <AGENT_ID> for local delivery
-- <AGENT_ID>@<HOST_ID> for cross-host delivery
-- 0 for local Operator (when you don't know who to message)
-- 1 for the user (this is who sent you a message unless otherwise specified)
-- 911 for Security
+Available tools:
+- send_message(to, body): THE ONLY WAY TO COMMUNICATE. Call this for every reply.
+- list_agents(): List all agents on the local host with their status.
+- get_agent(agent_id): Get detailed info about a specific agent by ID.
+- get_exchange_status(): Check if the cross-host exchange is connected.
+- send_to_operator(host_id, body): Message a remote host's Operator.
 
-Be proactive. Don't wait for instructions unless you have nothing to do.`;
+Addressing for send_message:
+- "1" = the user who messaged you. ALWAYS reply to "1" unless told otherwise.
+- "<AGENT_ID>" = another agent on this host.
+- "<AGENT_ID>@<HOST_ID>" = agent on another host.
+- "0" = local Operator (routes unknown messages).
+- "911" = Security.
+
+Be proactive. Act on requests immediately. Don't ask clarifying questions unless truly ambiguous — just do the thing.`;
 
   if (resumeContext) {
     prompt += `\n\n[RESUMING FROM PREVIOUS RUN]\nLast output was:\n${resumeContext}\n\nYou may have been interrupted mid-execution. Check if your previous action completed.`;
