@@ -50,6 +50,23 @@ async function callService(method: string, params: any): Promise<any> {
             required: ["agent_id"],
           },
         },
+        {
+          name: "get_exchange_status",
+          description: "Get the status of the cross-host message exchange, including this host's ID and whether we're connected.",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "send_to_operator",
+          description: "Send a message to the Operator on a remote host. Use this when you need to reach an agent on another host but don't know their ID. The remote Operator will route it.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              host_id: { type: "string", description: "The target host ID" },
+              body: { type: "string", description: "Message content — include who you're trying to reach and why" },
+            },
+            required: ["host_id", "body"],
+          },
+        },
       ],
     };
   }
@@ -91,6 +108,29 @@ async function callService(method: string, params: any): Promise<any> {
       const res = await fetch(`${SERVICE_URL}/agents/${args.agent_id}`);
       const agent = await res.json();
       return { content: [{ type: "text", text: JSON.stringify(agent, null, 2) }] };
+    }
+
+    if (toolName === "get_exchange_status") {
+      const res = await fetch(`${SERVICE_URL}/exchange/status`);
+      const status = await res.json();
+      return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+    }
+
+    if (toolName === "send_to_operator") {
+      const res = await fetch(`${SERVICE_URL}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-agent-id": agentId },
+        body: JSON.stringify({
+          to: `0@${args.host_id}`,
+          from: agentId,
+          body: args.body,
+          type: "message",
+        }),
+      });
+      const data = await res.json();
+      return {
+        content: [{ type: "text", text: data.delivered ? `Message sent to Operator on ${args.host_id}` : `Failed: ${data.error}` }],
+      };
     }
 
     return { content: [{ type: "text", text: `Unknown tool: ${toolName}` }] };
