@@ -37,7 +37,7 @@ function readAgentConfig(agentDir: string): AgentConfig | null {
 
 function agentLocation(config: AgentConfig): "assigned" | "unassigned" | "archived" {
   if (config.archived) return "archived";
-  if (config.assignedDir === agentHomeDir(config.id)) return "unassigned";
+  if (!config.assignedDir) return "unassigned";
   return "assigned";
 }
 

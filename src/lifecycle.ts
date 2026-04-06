@@ -70,7 +70,7 @@ export function createAgent(opts: {
     executionDelay: 2000,
     maxContextSize: 5,
     maxTurns: 25,
-    assignedDir: agentDir,
+    assignedDir: null,
     archived: false,
   };
 
@@ -81,7 +81,7 @@ export function createAgent(opts: {
   writeFileSync(join(agentDir, "last-run-output.txt"), "");
 
   // Register and start the agent
-  registerAgentIAM(id, config.name, "agent", "system", config.assignedDir);
+  registerAgentIAM(id, config.name, "agent", "system", null);
   startAgent(id, config);
 
   return { success: true, agentId: id };
@@ -191,10 +191,10 @@ export function unassignAgent(agentId: string): LifecycleResult {
 
   stopAgent(agentId);
 
-  config.assignedDir = agentDir;
+  config.assignedDir = null;
   writeAgentJson(agentDir, config);
 
-  updateAgentWorkingDir(agentId, agentDir);
+  updateAgentWorkingDir(agentId, null);
   startAgent(agentId, config);
 
   return { success: true, agentId };
@@ -253,7 +253,7 @@ export function forkAgent(agentId: string): LifecycleResult & { forkId?: string 
     ...sourceConfig,
     id: forkId,
     name: `${sourceConfig.name} (fork)`,
-    assignedDir: forkDir,
+    assignedDir: null,
     archived: false,
   };
   writeAgentJson(forkDir, forkConfig);

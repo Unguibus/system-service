@@ -8,7 +8,7 @@ export interface AgentConfig {
   executionDelay: number;
   maxContextSize: number;
   maxTurns: number;
-  assignedDir: string;
+  assignedDir: string | null;
   archived: boolean;
 }
 
@@ -29,6 +29,11 @@ export interface Message {
   type: string;
   body: string;
   timestamp: number;
+}
+
+// Resolve effective working directory — null means run from agent's home dir
+export function getEffectiveDir(config: AgentConfig): string {
+  return config.assignedDir ?? `${AGENTS_DIR}/${config.id}`;
 }
 
 // Lifecycle operation results

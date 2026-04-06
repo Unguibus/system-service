@@ -72,7 +72,7 @@ export function ensureReservedAgent(agentId: string): boolean {
     executionDelay: 1000,
     maxContextSize: 3,
     maxTurns: 25,
-    assignedDir: agentDir,
+    assignedDir: null,
     archived: false,
   };
 

@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import type { AgentConfig, Message } from "./types";
-import { AGENTS_DIR } from "./types";
+import { AGENTS_DIR, getEffectiveDir } from "./types";
 import {
   initAgentStore,
   addConversationEntry,
@@ -187,7 +187,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
 
     // Spawn Claude with cwd = assignedDir (the working directory)
     const proc = Bun.spawn(args, {
-      cwd: config.assignedDir,
+      cwd: getEffectiveDir(config),
       stdin: new Blob([userPrompt]),
       stdout: "pipe",
       stderr: "pipe",

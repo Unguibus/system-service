@@ -47,7 +47,8 @@ export function startAgent(
   // Initialize the Synapse runtime loop for this agent
   initSynapse(agentId, config);
 
-  console.log(`[runtime] Started agent ${config.name} (${agentId}) in ${config.assignedDir}`);
+  const { getEffectiveDir } = require("./types");
+  console.log(`[runtime] Started agent ${config.name} (${agentId}) in ${getEffectiveDir(config)}`);
 }
 
 export function stopAgent(agentId: string): void {
