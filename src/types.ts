@@ -9,6 +9,7 @@ export interface AgentConfig {
   maxContextSize: number;
   maxTurns: number;
   assignedDir: string | null;
+  assignedId: string | null; // friendly alias like "operator", "security"
   sessionId: string | null;
   archived: boolean;
 }

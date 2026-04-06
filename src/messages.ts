@@ -1,7 +1,7 @@
 import type { Message } from "./types";
 import { AGENT_OPERATOR, AGENT_USER } from "./types";
 import { deliverToSynapse, addToAgentConversation } from "./synapse";
-import { isAgentRegistered } from "./agents";
+import { isAgentRegistered, resolveAgentId } from "./agents";
 
 // Callback for cross-host delivery (set when Exchange is connected)
 let crossHostSend: ((msg: Message) => void) | null = null;
@@ -29,7 +29,9 @@ function parseAddress(address: string): { agentId: string; hostId?: string } {
 }
 
 export function routeMessage(msg: Message): { delivered: boolean; error?: string } {
-  const { agentId, hostId } = parseAddress(msg.to);
+  const { agentId: rawId, hostId } = parseAddress(msg.to);
+  // Resolve assignedId aliases (e.g. "operator" → actual agent ID)
+  const agentId = resolveAgentId(rawId) ?? rawId;
 
   // Cross-host: forward to Exchange
   if (hostId) {

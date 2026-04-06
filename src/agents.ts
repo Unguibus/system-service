@@ -58,6 +58,16 @@ export function getAgent(agentId: string): AgentState | null {
   };
 }
 
+// Resolve an ID that might be an assignedId alias to the real agent ID
+export function resolveAgentId(idOrAlias: string): string | null {
+  if (registry.has(idOrAlias)) return idOrAlias;
+  // Check assignedId aliases
+  for (const [agentId, config] of registry) {
+    if (config.assignedId === idOrAlias) return agentId;
+  }
+  return null;
+}
+
 export function listAgents(): AgentState[] {
   const agents: AgentState[] = [];
   for (const [agentId] of registry) {
@@ -83,6 +93,7 @@ export function updateAgentConfig(
   if (updates.executionDelay !== undefined) config.executionDelay = updates.executionDelay;
   if (updates.maxContextSize !== undefined) config.maxContextSize = updates.maxContextSize;
   if (updates.maxTurns !== undefined) config.maxTurns = updates.maxTurns;
+  if (updates.assignedId !== undefined) config.assignedId = updates.assignedId;
   if (updates.tags !== undefined) config.tags = updates.tags;
 
   writeFileSync(join(agentDir, "agent.json"), JSON.stringify(config, null, 2));
