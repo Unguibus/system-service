@@ -1,12 +1,11 @@
 import { mkdirSync } from "fs";
-import { UNGUIBUS_HOME, UNASSIGNED_DIR, OFFBOARDED_DIR } from "./types";
+import { UNGUIBUS_HOME, AGENTS_DIR } from "./types";
 import { discoverAgents } from "./agents";
 import { initIAM } from "./iam";
 import { startServer } from "./server";
 
 // Ensure required directories exist
-mkdirSync(UNASSIGNED_DIR, { recursive: true });
-mkdirSync(OFFBOARDED_DIR, { recursive: true });
+mkdirSync(AGENTS_DIR, { recursive: true });
 
 console.log("[init] unguibus system-service starting...");
 console.log(`[init] Home: ${UNGUIBUS_HOME}`);

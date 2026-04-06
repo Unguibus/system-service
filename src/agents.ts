@@ -1,28 +1,32 @@
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { AgentConfig, AgentState } from "./types";
-import { UNASSIGNED_DIR, OFFBOARDED_DIR } from "./types";
+import { AGENTS_DIR } from "./types";
 import { getAgentStatus } from "./runtime";
 import { startAgent } from "./runtime";
-import { registerAgentIAM, updateAgentWorkingDir, getAllRegisteredAgents } from "./iam";
+import { registerAgentIAM } from "./iam";
 
-// Registry: maps agentId -> current working directory
-const registry = new Map<string, string>();
+// Registry: maps agentId -> AgentConfig (cache, source of truth is agent.json)
+const registry = new Map<string, AgentConfig>();
 
-export function registerAgent(agentId: string, workingDir: string): void {
-  registry.set(agentId, workingDir);
+export function registerAgent(agentId: string, config: AgentConfig): void {
+  registry.set(agentId, config);
 }
 
 export function unregisterAgent(agentId: string): void {
   registry.delete(agentId);
 }
 
-export function getAgentWorkingDir(agentId: string): string | null {
-  return registry.get(agentId) ?? null;
+export function isAgentRegistered(agentId: string): boolean {
+  return registry.has(agentId);
 }
 
-function readAgentConfig(agentPath: string): AgentConfig | null {
-  const agentJsonPath = join(agentPath, "agent.json");
+function agentHomeDir(agentId: string): string {
+  return join(AGENTS_DIR, agentId);
+}
+
+function readAgentConfig(agentDir: string): AgentConfig | null {
+  const agentJsonPath = join(agentDir, "agent.json");
   if (!existsSync(agentJsonPath)) return null;
   try {
     return JSON.parse(readFileSync(agentJsonPath, "utf-8"));
@@ -31,27 +35,26 @@ function readAgentConfig(agentPath: string): AgentConfig | null {
   }
 }
 
-function agentLocation(workingDir: string): "assigned" | "unassigned" | "offboarded" {
-  if (workingDir.startsWith(UNASSIGNED_DIR)) return "unassigned";
-  if (workingDir.startsWith(OFFBOARDED_DIR)) return "offboarded";
+function agentLocation(config: AgentConfig): "assigned" | "unassigned" | "archived" {
+  if (config.archived) return "archived";
+  if (config.assignedDir === agentHomeDir(config.id)) return "unassigned";
   return "assigned";
 }
 
 export function getAgent(agentId: string): AgentState | null {
-  const workingDir = registry.get(agentId);
-  if (!workingDir) return null;
-
-  const agentPath = join(workingDir, ".unguibus");
-  const config = readAgentConfig(agentPath);
+  const agentDir = agentHomeDir(agentId);
+  const config = readAgentConfig(agentDir);
   if (!config) return null;
+
+  const loc = agentLocation(config);
 
   return {
     config,
     status: getAgentStatus(agentId) as AgentState["status"],
     pid: null,
-    location: agentLocation(workingDir),
-    assignedPath: agentLocation(workingDir) === "assigned" ? workingDir : null,
-    agentPath,
+    location: loc,
+    assignedPath: loc === "assigned" ? config.assignedDir : null,
+    agentPath: agentDir,
   };
 }
 
@@ -69,11 +72,8 @@ export function updateAgentConfig(
   agentId: string,
   updates: Partial<AgentConfig>
 ): AgentState | null {
-  const workingDir = registry.get(agentId);
-  if (!workingDir) return null;
-
-  const agentPath = join(workingDir, ".unguibus");
-  const config = readAgentConfig(agentPath);
+  const agentDir = agentHomeDir(agentId);
+  const config = readAgentConfig(agentDir);
   if (!config) return null;
 
   // Apply allowed updates
@@ -85,45 +85,31 @@ export function updateAgentConfig(
   if (updates.maxTurns !== undefined) config.maxTurns = updates.maxTurns;
   if (updates.tags !== undefined) config.tags = updates.tags;
 
-  writeFileSync(join(agentPath, "agent.json"), JSON.stringify(config, null, 2));
+  writeFileSync(join(agentDir, "agent.json"), JSON.stringify(config, null, 2));
+
+  // Update cache
+  registry.set(agentId, config);
 
   return getAgent(agentId);
 }
 
-// Scan filesystem and database to discover agents on startup
+// Scan ~/.unguibus/agents/ to discover agents on startup
 export function discoverAgents(): void {
-  // 1. Scan unassigned directory
-  if (existsSync(UNASSIGNED_DIR)) {
-    for (const entry of readdirSync(UNASSIGNED_DIR, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const agentDir = join(UNASSIGNED_DIR, entry.name);
-      const agentPath = join(agentDir, ".unguibus");
-      if (!existsSync(join(agentPath, "agent.json"))) continue;
+  if (!existsSync(AGENTS_DIR)) return;
 
-      const config = readAgentConfig(agentPath);
-      if (config && !registry.has(config.id)) {
-        registry.set(config.id, agentDir);
-        registerAgentIAM(config.id, config.name, "agent", "system", agentDir);
-        startAgent(config.id, agentDir, config);
-      }
+  for (const entry of readdirSync(AGENTS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const agentDir = join(AGENTS_DIR, entry.name);
+    const config = readAgentConfig(agentDir);
+    if (!config) continue;
+
+    registry.set(config.id, config);
+
+    if (!config.archived) {
+      registerAgentIAM(config.id, config.name, "agent", "system", config.assignedDir);
+      startAgent(config.id, config);
     }
   }
 
-  // 2. Load assigned agents from IAM database
-  const registered = getAllRegisteredAgents();
-  for (const agent of registered) {
-    if (registry.has(agent.agent_id)) continue; // Already loaded
-    if (!agent.working_dir) continue;
-
-    const agentPath = join(agent.working_dir, ".unguibus");
-    if (!existsSync(join(agentPath, "agent.json"))) continue;
-
-    const config = readAgentConfig(agentPath);
-    if (config) {
-      registry.set(config.id, agent.working_dir);
-      startAgent(config.id, agent.working_dir, config);
-    }
-  }
-
-  console.log(`[agents] Discovered and started ${registry.size} agent(s)`);
+  console.log(`[agents] Discovered ${registry.size} agent(s), started non-archived`);
 }

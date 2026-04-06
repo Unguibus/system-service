@@ -9,7 +9,8 @@ import {
   assignAgent,
   unassignAgent,
   forkAgent,
-  offboardAgent,
+  archiveAgent,
+  unarchiveAgent,
 } from "./lifecycle";
 import { stopAgent } from "./runtime";
 import { ensureReservedAgent, isReservedAgent } from "./reserved-agents";
@@ -185,15 +186,13 @@ async function handleRequest(req: Request): Promise<Response> {
   if (method === "POST" && path.match(/^\/agents\/[^/]+\/unassign$/)) {
     return (async () => {
       const agentId = path.split("/")[2];
-      const body = await parseBody(req);
-      if (!body?.currentDir) return json({ error: "Missing 'currentDir'" }, 400);
 
       const callerId = getCallerId(req);
       if (!hasPermission(callerId, "agent.unassign")) {
         return json({ error: "No agent.unassign permission" }, 403);
       }
 
-      const result = unassignAgent(agentId, body.currentDir);
+      const result = unassignAgent(agentId);
       return json(result, result.success ? 200 : 400);
     })();
   }
@@ -201,15 +200,13 @@ async function handleRequest(req: Request): Promise<Response> {
   if (method === "POST" && path.match(/^\/agents\/[^/]+\/fork$/)) {
     return (async () => {
       const agentId = path.split("/")[2];
-      const body = await parseBody(req);
-      if (!body?.agentPath) return json({ error: "Missing 'agentPath'" }, 400);
 
       const callerId = getCallerId(req);
       if (!hasPermission(callerId, "agent.fork")) {
         return json({ error: "No agent.fork permission" }, 403);
       }
 
-      const result = forkAgent(agentId, body.agentPath);
+      const result = forkAgent(agentId);
       return json(result, result.success ? 201 : 400);
     })();
   }
@@ -229,18 +226,45 @@ async function handleRequest(req: Request): Promise<Response> {
     })();
   }
 
-  if (method === "POST" && path.match(/^\/agents\/[^/]+\/offboard$/)) {
+  if (method === "POST" && path.match(/^\/agents\/[^/]+\/archive$/)) {
     return (async () => {
       const agentId = path.split("/")[2];
-      const agent = getAgent(agentId);
-      if (!agent) return json({ error: "Agent not found" }, 404);
 
       const callerId = getCallerId(req);
       if (!hasPermission(callerId, "agent.offboard")) {
         return json({ error: "No agent.offboard permission" }, 403);
       }
 
-      const result = offboardAgent(agentId, agent.agentPath);
+      const result = archiveAgent(agentId);
+      return json(result, result.success ? 200 : 400);
+    })();
+  }
+
+  if (method === "POST" && path.match(/^\/agents\/[^/]+\/unarchive$/)) {
+    return (async () => {
+      const agentId = path.split("/")[2];
+
+      const callerId = getCallerId(req);
+      if (!hasPermission(callerId, "agent.offboard")) {
+        return json({ error: "No agent.offboard permission" }, 403);
+      }
+
+      const result = unarchiveAgent(agentId);
+      return json(result, result.success ? 200 : 400);
+    })();
+  }
+
+  // Keep legacy offboard route as alias for archive
+  if (method === "POST" && path.match(/^\/agents\/[^/]+\/offboard$/)) {
+    return (async () => {
+      const agentId = path.split("/")[2];
+
+      const callerId = getCallerId(req);
+      if (!hasPermission(callerId, "agent.offboard")) {
+        return json({ error: "No agent.offboard permission" }, 403);
+      }
+
+      const result = archiveAgent(agentId);
       return json(result, result.success ? 200 : 400);
     })();
   }

@@ -1,7 +1,7 @@
 import type { Message } from "./types";
 import { AGENT_OPERATOR, AGENT_USER } from "./types";
 import { deliverToSynapse, addToAgentConversation } from "./synapse";
-import { getAgentWorkingDir } from "./agents";
+import { isAgentRegistered } from "./agents";
 
 // Callback for cross-host delivery (set when Exchange is connected)
 let crossHostSend: ((msg: Message) => void) | null = null;
@@ -60,8 +60,7 @@ export function routeMessage(msg: Message): { delivered: boolean; error?: string
   }
 
   // Local delivery to agent
-  const workingDir = getAgentWorkingDir(agentId);
-  if (workingDir) {
+  if (isAgentRegistered(agentId)) {
     // Store outgoing message in sender's conversation history
     if (msg.from && msg.from !== AGENT_USER) {
       addToAgentConversation(msg.from, {
@@ -79,8 +78,7 @@ export function routeMessage(msg: Message): { delivered: boolean; error?: string
   // Agent not found — route to Operator
   if (agentId !== AGENT_OPERATOR) {
     console.log(`[msg] Agent ${agentId} unknown, routing to Operator`);
-    const operatorDir = getAgentWorkingDir(AGENT_OPERATOR);
-    if (operatorDir) {
+    if (isAgentRegistered(AGENT_OPERATOR)) {
       const rerouted: Message = {
         ...msg,
         body: `[Rerouted: original to=${msg.to}] ${msg.body}`,

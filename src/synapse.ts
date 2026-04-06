@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import type { AgentConfig, Message } from "./types";
+import { AGENTS_DIR } from "./types";
 import {
   initAgentStore,
   addConversationEntry,
@@ -12,8 +13,7 @@ import { drainMessages } from "./messages";
 
 interface SynapseState {
   config: AgentConfig;
-  workingDir: string;
-  agentPath: string;
+  agentPath: string; // permanent home: ~/.unguibus/agents/<id>/
   store: AgentStore;
   batchTimer: ReturnType<typeof setTimeout> | null;
   pendingMessages: Message[];
@@ -23,8 +23,8 @@ interface SynapseState {
 
 const synapses = new Map<string, SynapseState>();
 
-function agentDataDir(workingDir: string): string {
-  return join(workingDir, ".unguibus");
+function agentDataDir(agentId: string): string {
+  return join(AGENTS_DIR, agentId);
 }
 
 function setStatus(agentPath: string, status: string): void {
@@ -113,7 +113,7 @@ function buildPrompt(
 }
 
 async function executeClaudeRun(state: SynapseState): Promise<void> {
-  const { config, agentPath, workingDir, pendingMessages, store } = state;
+  const { config, agentPath, pendingMessages, store } = state;
 
   if (pendingMessages.length === 0) return;
 
@@ -156,7 +156,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       `${process.env.HOME}/.local/bin/claude`;
 
     // Write MCP config pointing to SSE endpoint on system-service
-    const mcpConfigPath = join(state.agentPath, "mcp-config.json");
+    const mcpConfigPath = join(agentPath, "mcp-config.json");
     const mcpConfig = {
       mcpServers: {
         unguibus: {
@@ -185,9 +185,9 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
     // Add system prompt
     args.push("--system-prompt", systemPrompt);
 
-    // Spawn Claude
+    // Spawn Claude with cwd = assignedDir (the working directory)
     const proc = Bun.spawn(args, {
-      cwd: workingDir,
+      cwd: config.assignedDir,
       stdin: new Blob([userPrompt]),
       stdout: "pipe",
       stderr: "pipe",
@@ -220,18 +220,18 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       });
 
       // Save for resume context
-      saveLastOutput(state.agentPath, output);
+      saveLastOutput(agentPath, output);
 
       console.log(
         `[synapse] ${config.name} responded (${output.length} chars)`
       );
     }
 
-    setStatus(state.agentPath, "idle");
+    setStatus(agentPath, "idle");
   } catch (err: any) {
     console.error(`[synapse] Error running Claude for ${config.name}: ${err.message}`);
-    setStatus(state.agentPath, "error");
-    saveLastOutput(state.agentPath, `Error: ${err.message}`);
+    setStatus(agentPath, "error");
+    saveLastOutput(agentPath, `Error: ${err.message}`);
   } finally {
     state.running = false;
     state.proc = null;
@@ -260,15 +260,13 @@ function scheduleBatch(state: SynapseState): void {
 
 export function initSynapse(
   agentId: string,
-  workingDir: string,
   config: AgentConfig
 ): void {
-  const cPath = agentDataDir(workingDir);
+  const cPath = agentDataDir(agentId);
   const store = initAgentStore(cPath);
 
   const state: SynapseState = {
     config,
-    workingDir,
     agentPath: cPath,
     store,
     batchTimer: null,

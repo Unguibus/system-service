@@ -1,12 +1,12 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import type { AgentConfig } from "./types";
+import { AGENTS_DIR } from "./types";
 import { initSynapse, stopSynapse, isSynapseRunning } from "./synapse";
 import { registerAgent, unregisterAgent } from "./agents";
 
 interface ManagedAgent {
   config: AgentConfig;
-  workingDir: string;
   crashCount: number;
   lastCrashTime: number;
   intentionalStop: boolean;
@@ -15,12 +15,12 @@ interface ManagedAgent {
 
 const managed = new Map<string, ManagedAgent>();
 
-function claudeDir(workingDir: string): string {
-  return join(workingDir, ".unguibus");
+function agentHomeDir(agentId: string): string {
+  return join(AGENTS_DIR, agentId);
 }
 
-function setStatus(workingDir: string, status: string): void {
-  const statusFile = join(claudeDir(workingDir), "synapse.status");
+function setStatus(agentId: string, status: string): void {
+  const statusFile = join(agentHomeDir(agentId), "synapse.status");
   try {
     writeFileSync(statusFile, status);
   } catch {}
@@ -28,7 +28,6 @@ function setStatus(workingDir: string, status: string): void {
 
 export function startAgent(
   agentId: string,
-  workingDir: string,
   config: AgentConfig
 ): void {
   const existing = managed.get(agentId);
@@ -36,7 +35,6 @@ export function startAgent(
 
   const agent: ManagedAgent = {
     config,
-    workingDir,
     crashCount: existing?.crashCount ?? 0,
     lastCrashTime: existing?.lastCrashTime ?? 0,
     intentionalStop: false,
@@ -44,12 +42,12 @@ export function startAgent(
   };
 
   managed.set(agentId, agent);
-  registerAgent(agentId, workingDir);
+  registerAgent(agentId, config);
 
   // Initialize the Synapse runtime loop for this agent
-  initSynapse(agentId, workingDir, config);
+  initSynapse(agentId, config);
 
-  console.log(`[runtime] Started agent ${config.name} (${agentId}) in ${workingDir}`);
+  console.log(`[runtime] Started agent ${config.name} (${agentId}) in ${config.assignedDir}`);
 }
 
 export function stopAgent(agentId: string): void {
@@ -62,7 +60,7 @@ export function stopAgent(agentId: string): void {
   stopSynapse(agentId);
   unregisterAgent(agentId);
 
-  setStatus(agent.workingDir, "idle");
+  setStatus(agentId, "idle");
   managed.delete(agentId);
 
   console.log(`[runtime] Stopped agent ${agent.config.name} (${agentId})`);
@@ -72,7 +70,7 @@ export function getAgentStatus(agentId: string): string {
   const agent = managed.get(agentId);
   if (!agent) return "stopped";
 
-  const statusFile = join(claudeDir(agent.workingDir), "synapse.status");
+  const statusFile = join(agentHomeDir(agentId), "synapse.status");
   if (existsSync(statusFile)) {
     try {
       return readFileSync(statusFile, "utf-8").trim();

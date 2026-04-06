@@ -8,6 +8,8 @@ export interface AgentConfig {
   executionDelay: number;
   maxContextSize: number;
   maxTurns: number;
+  assignedDir: string;
+  archived: boolean;
 }
 
 // Agent runtime state (computed, not persisted)
@@ -15,9 +17,9 @@ export interface AgentState {
   config: AgentConfig;
   status: "idle" | "running" | "waiting" | "error";
   pid: number | null;
-  location: "assigned" | "unassigned" | "offboarded";
+  location: "assigned" | "unassigned" | "archived";
   assignedPath: string | null; // null if unassigned
-  agentPath: string; // full path to .unguibus/ directory
+  agentPath: string; // full path to agent's permanent home dir
 }
 
 // Message envelope
@@ -43,6 +45,5 @@ export const AGENT_SECURITY = "911";
 
 // Paths
 export const UNGUIBUS_HOME = `${process.env.HOME}/.unguibus`;
-export const UNASSIGNED_DIR = `${UNGUIBUS_HOME}/unassigned`;
-export const OFFBOARDED_DIR = `${UNGUIBUS_HOME}/offboarded`;
+export const AGENTS_DIR = `${UNGUIBUS_HOME}/agents`;
 export const SYSTEM_DB_PATH = `${UNGUIBUS_HOME}/system-service.db`;

@@ -4,7 +4,7 @@ import type { AgentConfig } from "./types";
 import {
   AGENT_OPERATOR,
   AGENT_SECURITY,
-  UNASSIGNED_DIR,
+  AGENTS_DIR,
 } from "./types";
 import { registerAgentIAM } from "./iam";
 import { startAgent } from "./runtime";
@@ -59,10 +59,9 @@ export function ensureReservedAgent(agentId: string): boolean {
   if (initialized.has(agentId)) return true;
 
   const spec = RESERVED_AGENTS[agentId];
-  const agentDir = join(UNASSIGNED_DIR, `reserved-${agentId}`);
-  const unguibusDir = join(agentDir, ".unguibus");
+  const agentDir = join(AGENTS_DIR, agentId);
 
-  mkdirSync(unguibusDir, { recursive: true });
+  mkdirSync(agentDir, { recursive: true });
 
   const config: AgentConfig = {
     id: agentId,
@@ -72,28 +71,31 @@ export function ensureReservedAgent(agentId: string): boolean {
     effort: spec.effort,
     executionDelay: 1000,
     maxContextSize: 3,
+    maxTurns: 25,
+    assignedDir: agentDir,
+    archived: false,
   };
 
   // Write agent.json
-  writeFileSync(join(unguibusDir, "agent.json"), JSON.stringify(config, null, 2));
+  writeFileSync(join(agentDir, "agent.json"), JSON.stringify(config, null, 2));
 
   // Write system prompt as CLAUDE.md so Claude sees it
   const systemPrompt =
     agentId === AGENT_OPERATOR ? OPERATOR_SYSTEM_PROMPT : SECURITY_SYSTEM_PROMPT;
-  writeFileSync(join(unguibusDir, "CLAUDE.md"), systemPrompt);
+  writeFileSync(join(agentDir, "CLAUDE.md"), systemPrompt);
 
-  if (!existsSync(join(unguibusDir, "synapse.status"))) {
-    writeFileSync(join(unguibusDir, "synapse.status"), "idle");
+  if (!existsSync(join(agentDir, "synapse.status"))) {
+    writeFileSync(join(agentDir, "synapse.status"), "idle");
   }
-  if (!existsSync(join(unguibusDir, "last-run-output.txt"))) {
-    writeFileSync(join(unguibusDir, "last-run-output.txt"), "");
+  if (!existsSync(join(agentDir, "last-run-output.txt"))) {
+    writeFileSync(join(agentDir, "last-run-output.txt"), "");
   }
 
   // Register IAM
   registerAgentIAM(agentId, spec.name, spec.role, "system");
 
   // Start the agent
-  startAgent(agentId, agentDir, config);
+  startAgent(agentId, config);
 
   initialized.add(agentId);
   console.log(`[reserved] Lazyloaded ${spec.name} (ID: ${agentId})`);
