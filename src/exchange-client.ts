@@ -42,7 +42,8 @@ export async function connectToExchange(config: {
     }
   });
 
-  await subscribe();
+  // Subscribe in background — don't block the caller
+  subscribe();
 }
 
 async function subscribe(): Promise<void> {
