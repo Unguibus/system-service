@@ -1,0 +1,14 @@
+{
+  "name": "@unguibus/system-service",
+  "version": "0.1.0",
+  "description": "Local daemon for agent process lifecycle, messaging, and runtime management",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}
