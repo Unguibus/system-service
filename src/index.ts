@@ -3,7 +3,7 @@ import { UNGUIBUS_HOME, AGENTS_DIR } from "./types";
 import { discoverAgents } from "./agents";
 import { initIAM } from "./iam";
 import { startServer } from "./server";
-import { startCleanupTimer } from "./conversation-db";
+import { initMessageDb, startCleanupTimer } from "./conversation-db";
 
 // Ensure required directories exist
 mkdirSync(AGENTS_DIR, { recursive: true });
@@ -11,8 +11,9 @@ mkdirSync(AGENTS_DIR, { recursive: true });
 console.log("[init] unguibus system-service starting...");
 console.log(`[init] Home: ${UNGUIBUS_HOME}`);
 
-// Initialize IAM database
+// Initialize databases
 initIAM();
+initMessageDb();
 
 // Discover existing agents from filesystem and start them
 discoverAgents();

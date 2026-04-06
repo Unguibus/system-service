@@ -7,6 +7,9 @@ import {
   addConversationEntry,
   getRecentEntries,
   closeAgentStore,
+  addToInbox,
+  getInboxSince,
+  ackInbox,
 } from "./conversation-db";
 
 interface SynapseState {
@@ -20,8 +23,6 @@ interface SynapseState {
 
 const synapses = new Map<string, SynapseState>();
 
-// Per-agent message inbox (messages waiting to be fetched)
-const inboxes = new Map<string, Message[]>();
 
 function agentDataDir(agentId: string): string {
   return join(AGENTS_DIR, agentId);
@@ -73,34 +74,22 @@ function buildPrompt(messages: Message[]): string {
   return prompt;
 }
 
-// --- Inbox API (called by message router) ---
+// --- Inbox API (backed by SQLite) ---
 
 export function deliverToInbox(agentId: string, msg: Message): void {
-  if (!inboxes.has(agentId)) inboxes.set(agentId, []);
-  inboxes.get(agentId)!.push(msg);
+  addToInbox(agentId, { from: msg.from, type: msg.type, body: msg.body, timestamp: msg.timestamp });
 }
 
-export function fetchNewMessages(agentId: string, since: number): Message[] {
-  const inbox = inboxes.get(agentId) || [];
-  return inbox.filter(m => m.timestamp > since);
-}
-
-export function ackMessages(agentId: string, upToTimestamp: number): void {
-  const inbox = inboxes.get(agentId) || [];
-  inboxes.set(agentId, inbox.filter(m => m.timestamp > upToTimestamp));
-}
-
-// Fetch new messages and ack in one call (for MCP tool)
 export function fetchNewAndAck(agentId: string): Message[] {
   const state = synapses.get(agentId);
   const since = state?.lastAckTimestamp ?? 0;
-  const messages = fetchNewMessages(agentId, since);
-  if (messages.length > 0) {
-    const maxTs = Math.max(...messages.map(m => m.timestamp));
-    ackMessages(agentId, maxTs);
-    if (state) state.lastAckTimestamp = maxTs;
+  const rows = getInboxSince(agentId, since);
+  if (rows.length > 0 && state) {
+    const maxTs = Math.max(...rows.map(r => r.timestamp));
+    ackInbox(agentId, maxTs);
+    state.lastAckTimestamp = maxTs;
   }
-  return messages;
+  return rows.map(r => ({ to: agentId, from: r.from, type: r.type, body: r.body, timestamp: r.timestamp }));
 }
 
 // --- Claude execution ---
@@ -246,16 +235,16 @@ async function synapseLoop(state: SynapseState): Promise<void> {
 
   while (!state.stopped) {
     // Fetch new messages since last ack
-    const messages = fetchNewMessages(config.id, state.lastAckTimestamp);
+    const rows = getInboxSince(config.id, state.lastAckTimestamp);
+    const messages: Message[] = rows.map(r => ({ to: config.id, from: r.from, type: r.type, body: r.body, timestamp: r.timestamp }));
 
     if (messages.length > 0) {
       console.log(`[synapse] ${config.name} has ${messages.length} new message(s)`);
       const success = await runClaude(state, messages);
 
       if (success) {
-        // Ack messages
         const maxTs = Math.max(...messages.map(m => m.timestamp));
-        ackMessages(config.id, maxTs);
+        ackInbox(config.id, maxTs);
         state.lastAckTimestamp = maxTs;
       } else {
         // Error or session busy — wait longer before retry
@@ -290,7 +279,6 @@ export function initSynapse(agentId: string, config: AgentConfig): void {
   };
 
   synapses.set(agentId, state);
-  if (!inboxes.has(agentId)) inboxes.set(agentId, []);
   setStatus(agentPath, "idle");
   console.log(`[synapse] Initialized for ${config.name} (${agentId})`);
 
