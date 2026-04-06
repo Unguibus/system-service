@@ -8,6 +8,7 @@ let exchangeUrl: string = "";
 let exchangeSecret: string = "";
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastTimestamp = 0;
+let abortController: AbortController | null = null;
 
 export function getHostId(): string {
   return hostId;
@@ -22,6 +23,9 @@ export async function connectToExchange(config: {
   secret: string;
   hostId: string;
 }): Promise<void> {
+  // Cancel any existing connection attempt
+  disconnectFromExchange();
+
   exchangeUrl = config.url;
   exchangeSecret = config.secret;
   hostId = config.hostId;
@@ -42,7 +46,7 @@ export async function connectToExchange(config: {
     }
   });
 
-  // Subscribe in background — don't block the caller
+  // Subscribe — don't block the caller
   subscribe();
 }
 
@@ -53,16 +57,20 @@ async function subscribe(): Promise<void> {
 
   console.log(`[exchange] Connecting to ${url}`);
 
+  abortController = new AbortController();
+
   try {
     const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${exchangeSecret}`,
         Accept: "text/event-stream",
       },
+      signal: abortController.signal,
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      const body = await response.text();
+      throw new Error(`HTTP ${response.status}: ${body}`);
     }
 
     connected = true;
@@ -79,9 +87,8 @@ async function subscribe(): Promise<void> {
 
       buffer += decoder.decode(value, { stream: true });
 
-      // Process SSE lines
       const lines = buffer.split("\n");
-      buffer = lines.pop() ?? ""; // Keep incomplete line in buffer
+      buffer = lines.pop() ?? "";
 
       for (const line of lines) {
         if (line.startsWith("data: ")) {
@@ -91,15 +98,22 @@ async function subscribe(): Promise<void> {
             deliverFromExchange(msg);
           } catch {}
         }
-        // Ignore heartbeat comments
       }
     }
   } catch (err: any) {
+    if (err.name === "AbortError") {
+      console.log("[exchange] Connection aborted");
+      return; // Don't reconnect if intentionally aborted
+    }
     console.error(`[exchange] Connection error: ${err.message}`);
   } finally {
     connected = false;
     eventSource = null;
-    scheduleReconnect();
+    abortController = null;
+    // Only auto-reconnect if we have config (not after intentional disconnect)
+    if (exchangeUrl) {
+      scheduleReconnect();
+    }
   }
 }
 
@@ -108,19 +122,30 @@ function scheduleReconnect(): void {
   console.log("[exchange] Reconnecting in 5s...");
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    subscribe();
+    if (exchangeUrl) {
+      subscribe();
+    }
   }, 5000);
 }
 
 export function disconnectFromExchange(): void {
+  // Clear reconnect
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  // Abort in-flight fetch
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+  // Cancel reader
   if (eventSource) {
-    eventSource.cancel();
+    try { eventSource.cancel(); } catch {}
     eventSource = null;
   }
   connected = false;
+  exchangeUrl = "";
+  exchangeSecret = "";
   console.log("[exchange] Disconnected");
 }
