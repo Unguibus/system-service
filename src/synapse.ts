@@ -53,18 +53,22 @@ function saveLastOutput(claudePath: string, output: string): void {
 function buildSystemPrompt(config: AgentConfig, resumeContext: string): string {
   let prompt = `You are ${config.name}, an autonomous agent managed by the unguibus system service.
 
-You receive messages from other agents and from the user. Process them and respond helpfully.
+You receive messages from other agents and from the user. Process them and take action.
 
-You have MCP tools available for messaging and coordination:
-- send_message: Send a message to another agent or the user. Provide "to" (address) and "body" (content).
+IMPORTANT: Your text output is internal thought only — it is NOT sent to anyone. You MUST use the send_message tool to communicate. If someone messages you, use send_message to reply. If you just think out loud without calling send_message, nobody will see your response.
+
+You have MCP tools available:
+- send_message: Send a message to an agent or the user. You MUST use this to reply.
 - list_agents: List all agents on the local host with their status.
 - get_agent: Get detailed info about a specific agent by ID.
+- get_exchange_status: Check if the cross-host exchange is connected and get this host's ID.
+- send_to_operator: Message a remote host's Operator when you don't know the target agent.
 
 Addressing:
 - <AGENT_ID> for local delivery
 - <AGENT_ID>@<HOST_ID> for cross-host delivery
 - 0 for local Operator (when you don't know who to message)
-- 1 for the user
+- 1 for the user (this is who sent you a message unless otherwise specified)
 - 911 for Security
 
 Be proactive. Don't wait for instructions unless you have nothing to do.`;
@@ -203,7 +207,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
     if (output) {
       // Store response in conversation.db
       addConversationEntry(db, {
-        type: "assistant",
+        type: "thought",
         from: config.name,
         message: output,
         timestamp: Date.now(),
@@ -305,6 +309,17 @@ export function stopSynapse(agentId: string): void {
 
 export function getSynapseState(agentId: string): SynapseState | undefined {
   return synapses.get(agentId);
+}
+
+export function addToAgentConversation(agentId: string, entry: {
+  type: string;
+  from: string;
+  message: string;
+  timestamp: number;
+}): void {
+  const state = synapses.get(agentId);
+  if (!state) return;
+  addConversationEntry(state.db, entry as any);
 }
 
 export function getAgentConversations(agentId: string, limit: number = 50): any[] | null {

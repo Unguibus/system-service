@@ -1,6 +1,6 @@
 import type { Message } from "./types";
 import { AGENT_OPERATOR, AGENT_USER } from "./types";
-import { deliverToSynapse } from "./synapse";
+import { deliverToSynapse, addToAgentConversation } from "./synapse";
 import { getAgentWorkingDir } from "./agents";
 
 // Callback for cross-host delivery (set when Exchange is connected)
@@ -42,6 +42,14 @@ export function routeMessage(msg: Message): { delivered: boolean; error?: string
 
   // Local delivery to user (ID 1)
   if (agentId === AGENT_USER) {
+    // Store as "assistant" message in the sender's conversation history
+    addToAgentConversation(msg.from, {
+      type: "assistant",
+      from: msg.from,
+      message: msg.body,
+      timestamp: msg.timestamp,
+    });
+
     if (userMessageHandler) {
       userMessageHandler(msg);
     } else {
