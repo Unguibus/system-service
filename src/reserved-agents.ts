@@ -73,6 +73,7 @@ export function ensureReservedAgent(agentId: string): boolean {
     maxContextSize: 3,
     maxTurns: 25,
     assignedDir: null,
+    sessionId: null,
     archived: false,
   };
 

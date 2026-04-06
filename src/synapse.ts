@@ -167,12 +167,6 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
     };
     writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig));
 
-    // Check for saved session ID for --resume
-    const sessionFile = join(agentPath, "session-id.txt");
-    const savedSessionId = existsSync(sessionFile)
-      ? readFileSync(sessionFile, "utf-8").trim()
-      : null;
-
     const args = [
       claudePath_exec,
       "--model", config.model,
@@ -189,8 +183,8 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
     ];
 
     // Resume previous session if available
-    if (savedSessionId) {
-      args.push("--resume", savedSessionId);
+    if (config.sessionId) {
+      args.push("--resume", config.sessionId);
     }
 
     // Add system prompt
@@ -226,13 +220,13 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
 
     // Parse JSON output to get session_id and result
     let output = "";
-    let sessionId = savedSessionId;
     try {
       const jsonOut = JSON.parse(stdout);
       output = jsonOut.result || "";
-      if (jsonOut.session_id) {
-        sessionId = jsonOut.session_id;
-        writeFileSync(sessionFile, sessionId);
+      if (jsonOut.session_id && jsonOut.session_id !== config.sessionId) {
+        config.sessionId = jsonOut.session_id;
+        // Save updated config with session ID
+        writeFileSync(join(agentPath, "agent.json"), JSON.stringify(config, null, 2));
       }
     } catch {
       // Fallback: treat as plain text if JSON parse fails

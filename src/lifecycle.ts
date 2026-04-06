@@ -72,6 +72,7 @@ export function createAgent(opts: {
     maxContextSize: 5,
     maxTurns: 25,
     assignedDir: null,
+    sessionId: null,
     archived: false,
   };
 
@@ -173,11 +174,11 @@ export async function onboardAgent(targetDir: string): Promise<LifecycleResult &
       maxContextSize: 5,
       maxTurns: 25,
       assignedDir: targetDir,
+      sessionId: id, // session ID = agent ID for onboarded agents
       archived: false,
     };
 
     writeAgentJson(agentDir, config);
-    writeFileSync(join(agentDir, "session-id.txt"), id);
     writeFileSync(join(agentDir, "synapse.status"), "idle");
     writeFileSync(join(agentDir, "last-run-output.txt"), "");
 
@@ -304,6 +305,7 @@ export function forkAgent(agentId: string): LifecycleResult & { forkId?: string 
     id: forkId,
     name: `${sourceConfig.name} (fork)`,
     assignedDir: null,
+    sessionId: null,
     archived: false,
   };
   writeAgentJson(forkDir, forkConfig);
