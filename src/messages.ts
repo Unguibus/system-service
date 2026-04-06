@@ -46,6 +46,7 @@ export function routeMessage(msg: Message): { delivered: boolean; error?: string
     addToAgentConversation(msg.from, {
       type: "assistant",
       from: msg.from,
+      to: AGENT_USER,
       message: msg.body,
       timestamp: msg.timestamp,
     });

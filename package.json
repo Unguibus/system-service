@@ -10,5 +10,8 @@
   },
   "devDependencies": {
     "bun-types": "latest"
+  },
+  "dependencies": {
+    "lokijs": "^1.5.12"
   }
 }

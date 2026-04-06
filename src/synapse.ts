@@ -2,20 +2,19 @@ import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import type { AgentConfig, Message } from "./types";
 import {
-  initConversationDb,
+  initAgentStore,
   addConversationEntry,
   getRecentEntries,
-  startCleanupTimer,
+  closeAgentStore,
+  type AgentStore,
 } from "./conversation-db";
 import { drainMessages } from "./messages";
-import type { Database } from "bun:sqlite";
 
 interface SynapseState {
   config: AgentConfig;
   workingDir: string;
   claudePath: string;
-  db: Database;
-  cleanupTimer: ReturnType<typeof setInterval>;
+  store: AgentStore;
   batchTimer: ReturnType<typeof setTimeout> | null;
   pendingMessages: Message[];
   running: boolean;
@@ -85,7 +84,7 @@ function buildPrompt(
   messages: Message[],
   resumeContext: string
 ): string {
-  const recentEntries = getRecentEntries(state.db, state.config.maxContextSize)
+  const recentEntries = getRecentEntries(state.store, state.config.maxContextSize)
     .reverse();
 
   let prompt = "";
@@ -112,7 +111,7 @@ function buildPrompt(
 }
 
 async function executeClaudeRun(state: SynapseState): Promise<void> {
-  const { config, claudePath, workingDir, pendingMessages, db } = state;
+  const { config, claudePath, workingDir, pendingMessages, store } = state;
 
   if (pendingMessages.length === 0) return;
 
@@ -131,9 +130,10 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
 
   // Store incoming messages in conversation.db
   for (const msg of messages) {
-    addConversationEntry(db, {
+    addConversationEntry(store, {
       type: "user",
       from: msg.from,
+      to: config.id,
       message: msg.body,
       timestamp: msg.timestamp,
     });
@@ -206,7 +206,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
 
     if (output) {
       // Store response in conversation.db
-      addConversationEntry(db, {
+      addConversationEntry(store, {
         type: "thought",
         from: config.name,
         message: output,
@@ -253,15 +253,13 @@ export function initSynapse(
   config: AgentConfig
 ): void {
   const cPath = claudeDir(workingDir);
-  const db = initConversationDb(cPath);
-  const cleanupTimer = startCleanupTimer(db);
+  const store = initAgentStore(cPath);
 
   const state: SynapseState = {
     config,
     workingDir,
     claudePath: cPath,
-    db,
-    cleanupTimer,
+    store,
     batchTimer: null,
     pendingMessages: [],
     running: false,
@@ -296,13 +294,12 @@ export function stopSynapse(agentId: string): void {
   if (state.batchTimer) {
     clearTimeout(state.batchTimer);
   }
-  clearInterval(state.cleanupTimer);
 
   if (state.proc && !state.proc.killed) {
     state.proc.kill("SIGTERM");
   }
 
-  state.db.close();
+  closeAgentStore(state.store);
   synapses.delete(agentId);
   console.log(`[synapse] Stopped for ${state.config.name} (${agentId})`);
 }
@@ -314,18 +311,19 @@ export function getSynapseState(agentId: string): SynapseState | undefined {
 export function addToAgentConversation(agentId: string, entry: {
   type: string;
   from: string;
+  to?: string;
   message: string;
   timestamp: number;
 }): void {
   const state = synapses.get(agentId);
   if (!state) return;
-  addConversationEntry(state.db, entry as any);
+  addConversationEntry(state.store, entry as any);
 }
 
 export function getAgentConversations(agentId: string, limit: number = 50): any[] | null {
   const state = synapses.get(agentId);
   if (!state) return null;
-  return getRecentEntries(state.db, limit).reverse();
+  return getRecentEntries(state.store, limit);
 }
 
 export function isSynapseRunning(agentId: string): boolean {

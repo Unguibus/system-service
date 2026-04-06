@@ -1,86 +1,142 @@
-import { Database } from "bun:sqlite";
-import { join, dirname } from "path";
-import { mkdirSync, existsSync } from "fs";
+import Loki from "lokijs";
+import { join } from "path";
+import { mkdirSync } from "fs";
 
-const CONVERSATION_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours
+const CONVERSATION_TTL_MS = 42 * 60 * 60 * 1000; // 42 hours
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const SNAPSHOT_INTERVAL_MS = 60 * 1000; // 60 seconds
 
-export function initConversationDb(claudePath: string): Database {
-  const dbPath = join(claudePath, "conversation.db");
-  mkdirSync(dirname(dbPath), { recursive: true });
+export interface ConversationEntry {
+  type: "user" | "assistant" | "thought" | "system";
+  from: string;
+  to?: string;
+  message: string;
+  timestamp: number;
+  created_at: number;
+}
 
-  const db = new Database(dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
+export interface AgentStore {
+  db: Loki;
+  conversations: Collection<ConversationEntry>;
+  snapshotTimer: ReturnType<typeof setInterval>;
+  cleanupTimer: ReturnType<typeof setInterval>;
+}
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS conversations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT NOT NULL,
-      "from" TEXT NOT NULL,
-      message TEXT NOT NULL,
-      timestamp INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
-    )
-  `);
+export function initAgentStore(claudePath: string): AgentStore {
+  mkdirSync(claudePath, { recursive: true });
+  const dbPath = join(claudePath, "state.json");
 
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_conversations_created_at
-    ON conversations(created_at)
-  `);
+  const db = new Loki(dbPath, {
+    autoload: true,
+    autosave: false, // We handle snapshots manually
+    autoloadCallback: () => {
+      // Ensure collection exists after load
+      if (!db.getCollection("conversations")) {
+        db.addCollection("conversations", {
+          indices: ["created_at", "type", "from"],
+        });
+      }
+      // Cleanup expired entries on load
+      cleanupOldEntries(db.getCollection("conversations")!);
+    },
+  });
 
-  return db;
+  // Wait for autoload to finish — LokiJS calls the callback synchronously
+  let conversations = db.getCollection<ConversationEntry>("conversations");
+  if (!conversations) {
+    conversations = db.addCollection("conversations", {
+      indices: ["created_at", "type", "from"],
+    });
+  }
+
+  // Periodic snapshot to disk
+  const snapshotTimer = setInterval(() => {
+    db.saveDatabase();
+  }, SNAPSHOT_INTERVAL_MS);
+
+  // Periodic TTL cleanup
+  const cleanupTimer = setInterval(() => {
+    const deleted = cleanupOldEntries(conversations!);
+    if (deleted > 0) {
+      console.log(`[store] Cleaned up ${deleted} expired entries`);
+      db.saveDatabase();
+    }
+  }, CLEANUP_INTERVAL_MS);
+
+  // Initial save
+  db.saveDatabase();
+
+  return { db, conversations, snapshotTimer, cleanupTimer };
 }
 
 export function addConversationEntry(
-  db: Database,
+  store: AgentStore,
   entry: {
-    type: "user" | "assistant" | "system";
+    type: ConversationEntry["type"];
     from: string;
+    to?: string;
     message: string;
     timestamp: number;
   }
 ): void {
-  db.prepare(
-    `INSERT INTO conversations (type, "from", message, timestamp, created_at)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(entry.type, entry.from, entry.message, entry.timestamp, Date.now());
+  store.conversations.insert({
+    ...entry,
+    created_at: Date.now(),
+  });
 }
 
 export function getRecentEntries(
-  db: Database,
+  store: AgentStore,
   count: number
-): Array<{
-  id: number;
-  type: string;
-  from: string;
-  message: string;
-  timestamp: number;
-  created_at: number;
-}> {
-  return db
-    .prepare(
-      `SELECT id, type, "from", message, timestamp, created_at
-       FROM conversations
-       ORDER BY created_at DESC
-       LIMIT ?`
-    )
-    .all(count) as any[];
+): ConversationEntry[] {
+  return store.conversations
+    .chain()
+    .simplesort("created_at", { desc: true })
+    .limit(count)
+    .data()
+    .reverse();
 }
 
-export function cleanupOldEntries(db: Database): number {
+export function getEntriesByType(
+  store: AgentStore,
+  type: ConversationEntry["type"],
+  count: number
+): ConversationEntry[] {
+  return store.conversations
+    .chain()
+    .find({ type })
+    .simplesort("created_at", { desc: true })
+    .limit(count)
+    .data()
+    .reverse();
+}
+
+export function getConversationWith(
+  store: AgentStore,
+  otherAgentId: string,
+  count: number
+): ConversationEntry[] {
+  return store.conversations
+    .chain()
+    .find({
+      $or: [{ from: otherAgentId }, { to: otherAgentId }],
+    })
+    .simplesort("created_at", { desc: true })
+    .limit(count)
+    .data()
+    .reverse();
+}
+
+function cleanupOldEntries(collection: Collection<ConversationEntry>): number {
   const cutoff = Date.now() - CONVERSATION_TTL_MS;
-  const result = db.prepare(
-    "DELETE FROM conversations WHERE created_at < ?"
-  ).run(cutoff);
-  return result.changes;
+  const old = collection.find({ created_at: { $lt: cutoff } });
+  old.forEach((entry) => collection.remove(entry));
+  return old.length;
 }
 
-export function startCleanupTimer(db: Database): ReturnType<typeof setInterval> {
-  return setInterval(() => {
-    const deleted = cleanupOldEntries(db);
-    if (deleted > 0) {
-      console.log(`[db] Cleaned up ${deleted} expired conversation entries`);
-    }
-  }, CLEANUP_INTERVAL_MS);
+export function closeAgentStore(store: AgentStore): void {
+  clearInterval(store.snapshotTimer);
+  clearInterval(store.cleanupTimer);
+  store.db.saveDatabase();
+  store.db.close();
 }
