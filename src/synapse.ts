@@ -55,10 +55,10 @@ function buildSystemPrompt(config: AgentConfig, resumeContext: string): string {
 
 You receive messages from other agents and from the user. Process them and respond helpfully.
 
-You have access to the messaging system via the local REST API:
-- POST http://localhost:7272/messages — Send a message. Body: { to: "<address>", body: "..." }
-- GET http://localhost:7272/agents — List local agents and their status.
-- GET http://localhost:7272/agents/:id — Get metadata for a specific agent.
+You have MCP tools available for messaging and coordination:
+- send_message: Send a message to another agent or the user. Provide "to" (address) and "body" (content).
+- list_agents: List all agents on the local host with their status.
+- get_agent: Get detailed info about a specific agent by ID.
 
 Addressing:
 - <AGENT_ID> for local delivery
@@ -149,13 +149,27 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       process.env.CLAUDE_PATH ??
       `${process.env.HOME}/.local/bin/claude`;
 
+    // Write MCP config for this agent
+    const mcpConfigPath = join(state.claudePath, "mcp-config.json");
+    const bunPath = `${process.env.HOME}/.bun/bin/bun`;
+    const mcpStdioPath = join(import.meta.dir, "mcp-stdio.ts");
+    const mcpConfig = {
+      mcpServers: {
+        unguibus: {
+          command: bunPath,
+          args: ["run", mcpStdioPath, config.id],
+        },
+      },
+    };
+    writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig));
+
     const args = [
       claudePath_exec,
       "--model", config.model,
       "--print",
       "--output-format", "text",
       "--max-turns", String(config.maxTurns || 25),
-      "--dangerously-skip-permissions",
+      "--mcp-config", mcpConfigPath,
     ];
 
     // Add system prompt
