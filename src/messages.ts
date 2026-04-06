@@ -62,6 +62,16 @@ export function routeMessage(msg: Message): { delivered: boolean; error?: string
   // Local delivery to agent
   const workingDir = getAgentWorkingDir(agentId);
   if (workingDir) {
+    // Store outgoing message in sender's conversation history
+    if (msg.from && msg.from !== AGENT_USER) {
+      addToAgentConversation(msg.from, {
+        type: "assistant",
+        from: msg.from,
+        to: agentId,
+        message: msg.body,
+        timestamp: msg.timestamp,
+      });
+    }
     deliverToSynapse(agentId, msg);
     return { delivered: true };
   }
