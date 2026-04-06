@@ -182,9 +182,9 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       "mcp__unguibus__send_to_operator",
     ];
 
-    // Resume previous session if available (fork to avoid conflicts with active sessions)
+    // Resume previous session if available
     if (config.sessionId) {
-      args.push("--resume", config.sessionId, "--fork-session");
+      args.push("--resume", config.sessionId);
     }
 
     // Add system prompt
@@ -209,10 +209,34 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
 
     state.proc = proc;
 
+    // Session-busy detection: if Claude doesn't produce output within 10s,
+    // the session is likely active elsewhere. Abort and retry later.
+    const SESSION_BUSY_TIMEOUT = 10000;
+    let timedOut = false;
+    const busyTimer = setTimeout(() => {
+      timedOut = true;
+      proc.kill("SIGTERM");
+    }, SESSION_BUSY_TIMEOUT);
+
     // Collect output
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
+    clearTimeout(busyTimer);
+
+    if (timedOut) {
+      console.log(`[synapse] Session busy for ${config.name}, will retry later`);
+      // Put messages back for next attempt
+      state.pendingMessages.unshift(...messages);
+      setStatus(agentPath, "idle");
+      // Retry after a longer delay
+      setTimeout(() => {
+        if (!state.running && state.pendingMessages.length > 0) {
+          scheduleBatch(state);
+        }
+      }, 30000); // Retry in 30s
+      return;
+    }
 
     if (stderr && exitCode !== 0) {
       console.error(`[synapse] Claude error for ${config.name}: ${stderr.slice(0, 200)}`);
@@ -225,11 +249,9 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       output = jsonOut.result || "";
       if (jsonOut.session_id && jsonOut.session_id !== config.sessionId) {
         config.sessionId = jsonOut.session_id;
-        // Save updated config with session ID
         writeFileSync(join(agentPath, "agent.json"), JSON.stringify(config, null, 2));
       }
     } catch {
-      // Fallback: treat as plain text if JSON parse fails
       output = stdout.trim();
     }
 
