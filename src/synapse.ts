@@ -86,7 +86,7 @@ function buildPrompt(
   messages: Message[],
   resumeContext: string
 ): string {
-  const recentEntries = getRecentEntries(state.store, state.config.maxContextSize)
+  const recentEntries = getRecentEntries(state.store, 20)
     .reverse();
 
   let prompt = "";

@@ -91,7 +91,6 @@ export function updateAgentConfig(
   if (updates.model !== undefined) config.model = updates.model;
   if (updates.effort !== undefined) config.effort = updates.effort;
   if (updates.executionDelay !== undefined) config.executionDelay = updates.executionDelay;
-  if (updates.maxContextSize !== undefined) config.maxContextSize = updates.maxContextSize;
   if (updates.maxTurns !== undefined) config.maxTurns = updates.maxTurns;
   if (updates.assignedId !== undefined) config.assignedId = updates.assignedId;
   if (updates.tags !== undefined) config.tags = updates.tags;

@@ -6,7 +6,6 @@ export interface AgentConfig {
   model: "haiku" | "sonnet" | "opus";
   effort: "low" | "medium" | "high" | "max";
   executionDelay: number;
-  maxContextSize: number;
   maxTurns: number;
   assignedDir: string | null;
   assignedId: string | null; // friendly alias like "operator", "security"

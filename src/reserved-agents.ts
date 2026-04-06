@@ -70,7 +70,6 @@ export function ensureReservedAgent(agentId: string): boolean {
     model: spec.model,
     effort: spec.effort,
     executionDelay: 1000,
-    maxContextSize: 3,
     maxTurns: 25,
     assignedDir: null,
     assignedId: agentId, // "0" for operator, "911" for security
