@@ -1,6 +1,6 @@
 import type { Message } from "./types";
 import { AGENT_OPERATOR, AGENT_USER } from "./types";
-import { deliverToSynapse, addToAgentConversation } from "./synapse";
+import { deliverToInbox, addToAgentConversation } from "./synapse";
 import { isAgentRegistered, resolveAgentId } from "./agents";
 
 // Callback for cross-host delivery (set when Exchange is connected)
@@ -8,9 +8,6 @@ let crossHostSend: ((msg: Message) => void) | null = null;
 
 // Callback for delivering to user (ID 1) — set by Electron app or console
 let userMessageHandler: ((msg: Message) => void) | null = null;
-
-// In-memory queue for messages to agents not yet initialized
-const pendingQueues = new Map<string, Message[]>();
 
 export function setCrossHostSender(fn: (msg: Message) => void): void {
   crossHostSend = fn;
@@ -30,7 +27,6 @@ function parseAddress(address: string): { agentId: string; hostId?: string } {
 
 export function routeMessage(msg: Message): { delivered: boolean; error?: string } {
   const { agentId: rawId, hostId } = parseAddress(msg.to);
-  // Resolve assignedId aliases (e.g. "operator" → actual agent ID)
   const agentId = resolveAgentId(rawId) ?? rawId;
 
   // Cross-host: forward to Exchange
@@ -44,7 +40,6 @@ export function routeMessage(msg: Message): { delivered: boolean; error?: string
 
   // Local delivery to user (ID 1)
   if (agentId === AGENT_USER) {
-    // Store as "assistant" message in the sender's conversation history
     addToAgentConversation(msg.from, {
       type: "assistant",
       from: msg.from,
@@ -73,7 +68,7 @@ export function routeMessage(msg: Message): { delivered: boolean; error?: string
         timestamp: msg.timestamp,
       });
     }
-    deliverToSynapse(agentId, msg);
+    deliverToInbox(agentId, msg);
     return { delivered: true };
   }
 
@@ -81,36 +76,21 @@ export function routeMessage(msg: Message): { delivered: boolean; error?: string
   if (agentId !== AGENT_OPERATOR) {
     console.log(`[msg] Agent ${agentId} unknown, routing to Operator`);
     if (isAgentRegistered(AGENT_OPERATOR)) {
-      const rerouted: Message = {
+      deliverToInbox(AGENT_OPERATOR, {
         ...msg,
         body: `[Rerouted: original to=${msg.to}] ${msg.body}`,
-      };
-      deliverToSynapse(AGENT_OPERATOR, rerouted);
+      });
       return { delivered: true };
     }
   }
 
-  // Queue for later if agent not yet started
-  if (!pendingQueues.has(agentId)) {
-    pendingQueues.set(agentId, []);
-  }
-  pendingQueues.get(agentId)!.push(msg);
+  // Deliver to inbox anyway — synapse loop will pick it up when agent starts
+  deliverToInbox(agentId, msg);
   return { delivered: true };
-}
-
-// Called by Synapse loop to drain pending messages
-export function drainMessages(agentId: string): Message[] {
-  const msgs = pendingQueues.get(agentId) ?? [];
-  pendingQueues.set(agentId, []);
-  return msgs;
 }
 
 // Deliver incoming cross-host message to local agent
 export function deliverFromExchange(msg: Message): void {
   const { agentId } = parseAddress(msg.to);
-  routeMessage({ ...msg, to: agentId }); // Strip host, deliver locally
-}
-
-export function getQueueDepth(agentId: string): number {
-  return pendingQueues.get(agentId)?.length ?? 0;
+  routeMessage({ ...msg, to: agentId });
 }

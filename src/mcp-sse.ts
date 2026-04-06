@@ -3,7 +3,7 @@
 
 import { routeMessage } from "./messages";
 import { listAgents, getAgent } from "./agents";
-import { getAgentConversations } from "./synapse";
+import { getAgentConversations, fetchNewAndAck } from "./synapse";
 import type { Message } from "./types";
 
 const TOOLS = [
@@ -53,6 +53,11 @@ const TOOLS = [
       required: ["host_id", "body"],
     },
   },
+  {
+    name: "fetch_new_and_ack",
+    description: "Check for new messages sent to you since your last check. Returns any pending messages and acknowledges them. Use this when a user tells you to check your messages, or periodically to stay up to date.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 async function handleToolCall(agentId: string, name: string, args: any): Promise<string> {
@@ -93,6 +98,13 @@ async function handleToolCall(agentId: string, name: string, args: any): Promise
       };
       const result = routeMessage(msg);
       return result.delivered ? `Message sent to Operator on ${args.host_id}` : `Failed: ${result.error}`;
+    }
+    if (name === "fetch_new_and_ack") {
+      const messages = fetchNewAndAck(agentId);
+      if (messages.length === 0) return "No new messages.";
+      return JSON.stringify(messages.map(m => ({
+        from: m.from, type: m.type, body: m.body, timestamp: m.timestamp,
+      })), null, 2);
     }
     return `Unknown tool: ${name}`;
   } catch (err: any) {

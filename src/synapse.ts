@@ -9,19 +9,21 @@ import {
   closeAgentStore,
   type AgentStore,
 } from "./conversation-db";
-import { drainMessages } from "./messages";
 
 interface SynapseState {
   config: AgentConfig;
-  agentPath: string; // permanent home: ~/.unguibus/agents/<id>/
+  agentPath: string;
   store: AgentStore;
-  batchTimer: ReturnType<typeof setTimeout> | null;
-  pendingMessages: Message[];
+  lastAckTimestamp: number;
   running: boolean;
+  stopped: boolean;
   proc: ReturnType<typeof Bun.spawn> | null;
 }
 
 const synapses = new Map<string, SynapseState>();
+
+// Per-agent message inbox (messages waiting to be fetched)
+const inboxes = new Map<string, Message[]>();
 
 function agentDataDir(agentId: string): string {
   return join(AGENTS_DIR, agentId);
@@ -33,24 +35,14 @@ function setStatus(agentPath: string, status: string): void {
   } catch {}
 }
 
-function getResumeContext(agentPath: string): string {
-  const file = join(agentPath, "last-run-output.txt");
-  if (!existsSync(file)) return "";
-  try {
-    return readFileSync(file, "utf-8").trim();
-  } catch {
-    return "";
-  }
-}
-
 function saveLastOutput(agentPath: string, output: string): void {
   try {
     writeFileSync(join(agentPath, "last-run-output.txt"), output);
   } catch {}
 }
 
-function buildSystemPrompt(config: AgentConfig, resumeContext: string): string {
-  let prompt = `You are ${config.name}, an autonomous agent managed by the unguibus system service.
+function buildSystemPrompt(config: AgentConfig): string {
+  return `You are ${config.name}, an autonomous agent managed by the unguibus system service.
 
 You receive messages from other agents and from the user. Process them and take action.
 
@@ -73,64 +65,55 @@ Addressing for send_message:
 - "911" = Security.
 
 Be proactive. Act on requests immediately. Don't ask clarifying questions unless truly ambiguous — just do the thing.`;
+}
 
-  if (resumeContext) {
-    prompt += `\n\n[RESUMING FROM PREVIOUS RUN]\nLast output was:\n${resumeContext}\n\nYou may have been interrupted mid-execution. Check if your previous action completed.`;
+function buildPrompt(messages: Message[]): string {
+  let prompt = "--- NEW MESSAGES ---\n";
+  for (const msg of messages) {
+    prompt += `From: ${msg.from}\nType: ${msg.type}\nMessage: ${msg.body}\n\n`;
   }
-
   return prompt;
 }
 
-function buildPrompt(
-  state: SynapseState,
-  messages: Message[],
-  resumeContext: string
-): string {
-  const recentEntries = getRecentEntries(state.store, 20)
-    .reverse();
+// --- Inbox API (called by message router) ---
 
-  let prompt = "";
+export function deliverToInbox(agentId: string, msg: Message): void {
+  if (!inboxes.has(agentId)) inboxes.set(agentId, []);
+  inboxes.get(agentId)!.push(msg);
+}
 
-  // Add conversation history
-  if (recentEntries.length > 0) {
-    prompt += "--- CONVERSATION HISTORY ---\n";
-    for (const entry of recentEntries) {
-      const time = new Date(entry.created_at).toISOString().slice(11, 19);
-      prompt += `[${time}] ${entry.type} (${entry.from}): ${entry.message}\n`;
-    }
-    prompt += "\n";
-  }
+export function fetchNewMessages(agentId: string, since: number): Message[] {
+  const inbox = inboxes.get(agentId) || [];
+  return inbox.filter(m => m.timestamp > since);
+}
 
-  // Add current messages
+export function ackMessages(agentId: string, upToTimestamp: number): void {
+  const inbox = inboxes.get(agentId) || [];
+  inboxes.set(agentId, inbox.filter(m => m.timestamp > upToTimestamp));
+}
+
+// Fetch new messages and ack in one call (for MCP tool)
+export function fetchNewAndAck(agentId: string): Message[] {
+  const state = synapses.get(agentId);
+  const since = state?.lastAckTimestamp ?? 0;
+  const messages = fetchNewMessages(agentId, since);
   if (messages.length > 0) {
-    prompt += "--- INCOMING MESSAGES ---\n";
-    for (const msg of messages) {
-      prompt += `From: ${msg.from}\nType: ${msg.type}\nMessage: ${msg.body}\n\n`;
-    }
+    const maxTs = Math.max(...messages.map(m => m.timestamp));
+    ackMessages(agentId, maxTs);
+    if (state) state.lastAckTimestamp = maxTs;
   }
-
-  return prompt;
+  return messages;
 }
 
-async function executeClaudeRun(state: SynapseState): Promise<void> {
-  const { config, agentPath, pendingMessages, store } = state;
+// --- Claude execution ---
 
-  if (pendingMessages.length === 0) return;
-
-  // Drain messages
-  const messages = [...pendingMessages];
-  state.pendingMessages = [];
-
-  // Also drain any new messages that arrived via the queue
-  const queuedMessages = drainMessages(config.id);
-  messages.push(...queuedMessages);
-
-  if (messages.length === 0) return;
+async function runClaude(state: SynapseState, messages: Message[]): Promise<boolean> {
+  const { config, agentPath, store } = state;
 
   setStatus(agentPath, "running");
   state.running = true;
 
-  // Store incoming messages in conversation.db
+  // Store incoming messages in conversation store
   for (const msg of messages) {
     addConversationEntry(store, {
       type: "user",
@@ -141,108 +124,87 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
     });
   }
 
-  const resumeContext = getResumeContext(agentPath);
-  const systemPrompt = buildSystemPrompt(config, resumeContext);
-  const userPrompt = buildPrompt(state, messages, resumeContext);
+  const claudePath = process.env.CLAUDE_PATH ?? `${process.env.HOME}/.local/bin/claude`;
 
-  console.log(
-    `[synapse] Running Claude for ${config.name} (${messages.length} message(s))`
-  );
+  // Write MCP config
+  const mcpConfigPath = join(agentPath, "mcp-config.json");
+  writeFileSync(mcpConfigPath, JSON.stringify({
+    mcpServers: {
+      unguibus: {
+        type: "sse",
+        url: `http://localhost:7272/mcp/${config.id}/sse`,
+      },
+    },
+  }));
+
+  const args = [
+    claudePath,
+    "--model", config.model,
+    "--print",
+    "--output-format", "json",
+    "--max-turns", String(config.maxTurns || 25),
+    "--mcp-config", mcpConfigPath,
+    "--allowedTools",
+    "mcp__unguibus__send_message",
+    "mcp__unguibus__list_agents",
+    "mcp__unguibus__get_agent",
+    "mcp__unguibus__get_exchange_status",
+    "mcp__unguibus__send_to_operator",
+    "mcp__unguibus__fetch_new_and_ack",
+  ];
+
+  if (config.sessionId) {
+    args.push("--resume", config.sessionId);
+  }
+
+  args.push("--system-prompt", buildSystemPrompt(config));
+
+  if (config.assignedDir) {
+    args.push("--add-dir", config.assignedDir);
+  }
+
+  const userPrompt = buildPrompt(messages);
 
   try {
-    // Find claude executable
-    const claudePath_exec =
-      process.env.CLAUDE_PATH ??
-      `${process.env.HOME}/.local/bin/claude`;
-
-    // Write MCP config pointing to SSE endpoint on system-service
-    const mcpConfigPath = join(agentPath, "mcp-config.json");
-    const mcpConfig = {
-      mcpServers: {
-        unguibus: {
-          type: "sse",
-          url: `http://localhost:7272/mcp/${config.id}/sse`,
-        },
-      },
-    };
-    writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig));
-
-    const args = [
-      claudePath_exec,
-      "--model", config.model,
-      "--print",
-      "--output-format", "json",
-      "--max-turns", String(config.maxTurns || 25),
-      "--mcp-config", mcpConfigPath,
-      "--allowedTools",
-      "mcp__unguibus__send_message",
-      "mcp__unguibus__list_agents",
-      "mcp__unguibus__get_agent",
-      "mcp__unguibus__get_exchange_status",
-      "mcp__unguibus__send_to_operator",
-    ];
-
-    // Resume previous session if available
-    if (config.sessionId) {
-      args.push("--resume", config.sessionId);
-    }
-
-    // Add system prompt
-    args.push("--system-prompt", systemPrompt);
-
-    // If assigned to a project, add it as a context directory
-    if (config.assignedDir) {
-      args.push("--add-dir", config.assignedDir);
-    }
-
-    // Run from agent's home dir (session lives here), not the project dir
     const proc = Bun.spawn(args, {
       cwd: agentPath,
       stdin: new Blob([userPrompt]),
       stdout: "pipe",
       stderr: "pipe",
-      env: {
-        ...process.env,
-        CLAUDE_MODEL: config.model,
-      },
+      env: { ...process.env, CLAUDE_MODEL: config.model },
     });
 
     state.proc = proc;
 
-    // Session-busy detection: if Claude doesn't produce output within 10s,
-    // the session is likely active elsewhere. Abort and retry later.
-    const SESSION_BUSY_TIMEOUT = 10000;
+    // Session-busy detection: 10s timeout
     let timedOut = false;
     const busyTimer = setTimeout(() => {
       timedOut = true;
       proc.kill("SIGTERM");
-    }, SESSION_BUSY_TIMEOUT);
+    }, 10000);
 
-    // Collect output
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
+    await proc.exited;
     clearTimeout(busyTimer);
 
+    state.proc = null;
+
     if (timedOut) {
-      console.log(`[synapse] Session busy for ${config.name}, will retry later`);
-      // Put messages back for next attempt
-      state.pendingMessages.unshift(...messages);
+      console.log(`[synapse] Session busy for ${config.name}, will retry`);
       setStatus(agentPath, "idle");
-      // Retry after a longer delay
-      setTimeout(() => {
-        if (!state.running && state.pendingMessages.length > 0) {
-          scheduleBatch(state);
-        }
-      }, 30000); // Retry in 30s
-      return;
+      state.running = false;
+      return false; // Don't ack — retry later
     }
 
-    if (stderr && exitCode !== 0) {
+    if (stderr && !stdout) {
       console.error(`[synapse] Claude error for ${config.name}: ${stderr.slice(0, 200)}`);
+      setStatus(agentPath, "error");
+      state.running = false;
+      return false;
     }
 
-    // Parse JSON output to get session_id and result
+    // Parse output
     let output = "";
     try {
       const jsonOut = JSON.parse(stdout);
@@ -256,99 +218,98 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
     }
 
     if (output) {
-      // Store response in conversation.db
       addConversationEntry(store, {
         type: "thought",
         from: config.name,
         message: output,
         timestamp: Date.now(),
       });
-
-      // Save for resume context
       saveLastOutput(agentPath, output);
-
-      console.log(
-        `[synapse] ${config.name} responded (${output.length} chars)`
-      );
+      console.log(`[synapse] ${config.name} responded (${output.length} chars)`);
     }
 
     setStatus(agentPath, "idle");
+    state.running = false;
+    return true; // Success — ack messages
+
   } catch (err: any) {
-    console.error(`[synapse] Error running Claude for ${config.name}: ${err.message}`);
+    console.error(`[synapse] Error for ${config.name}: ${err.message}`);
     setStatus(agentPath, "error");
     saveLastOutput(agentPath, `Error: ${err.message}`);
-  } finally {
     state.running = false;
-    state.proc = null;
+    return false;
   }
 }
 
-function scheduleBatch(state: SynapseState): void {
-  if (state.batchTimer) {
-    console.log(`[synapse] Batch already scheduled for ${state.config.name}`);
-    return;
+// --- Main polling loop ---
+
+async function synapseLoop(state: SynapseState): Promise<void> {
+  const { config } = state;
+  const pollInterval = config.executionDelay || 1000;
+  const errorRetryInterval = 10000;
+
+  console.log(`[synapse] Loop started for ${config.name} (poll: ${pollInterval}ms)`);
+
+  while (!state.stopped) {
+    // Fetch new messages since last ack
+    const messages = fetchNewMessages(config.id, state.lastAckTimestamp);
+
+    if (messages.length > 0) {
+      console.log(`[synapse] ${config.name} has ${messages.length} new message(s)`);
+      const success = await runClaude(state, messages);
+
+      if (success) {
+        // Ack messages
+        const maxTs = Math.max(...messages.map(m => m.timestamp));
+        ackMessages(config.id, maxTs);
+        state.lastAckTimestamp = maxTs;
+      } else {
+        // Error or session busy — wait longer before retry
+        await sleep(errorRetryInterval);
+      }
+    } else {
+      // No messages — wait and poll again
+      await sleep(pollInterval);
+    }
   }
 
-  const delay = state.config.executionDelay;
-  console.log(`[synapse] Scheduling batch for ${state.config.name} in ${delay}ms`);
-
-  setStatus(state.agentPath, "waiting");
-
-  state.batchTimer = setTimeout(async () => {
-    console.log(`[synapse] Batch timer fired for ${state.config.name}`);
-    state.batchTimer = null;
-    await executeClaudeRun(state);
-  }, delay);
+  console.log(`[synapse] Loop stopped for ${config.name}`);
 }
 
-// Public API
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-export function initSynapse(
-  agentId: string,
-  config: AgentConfig
-): void {
-  const cPath = agentDataDir(agentId);
-  const store = initAgentStore(cPath);
+// --- Public API ---
+
+export function initSynapse(agentId: string, config: AgentConfig): void {
+  const agentPath = agentDataDir(agentId);
+  const store = initAgentStore(agentPath);
 
   const state: SynapseState = {
     config,
-    agentPath: cPath,
+    agentPath,
     store,
-    batchTimer: null,
-    pendingMessages: [],
+    lastAckTimestamp: Date.now(), // Start from now — don't process old messages
     running: false,
+    stopped: false,
     proc: null,
   };
 
   synapses.set(agentId, state);
-  setStatus(cPath, "idle");
+  if (!inboxes.has(agentId)) inboxes.set(agentId, []);
+  setStatus(agentPath, "idle");
   console.log(`[synapse] Initialized for ${config.name} (${agentId})`);
-}
 
-export function deliverToSynapse(agentId: string, msg: Message): void {
-  const state = synapses.get(agentId);
-  if (!state) {
-    console.warn(`[synapse] No synapse for agent ${agentId}, queueing`);
-    return;
-  }
-
-  state.pendingMessages.push(msg);
-  console.log(`[synapse] Delivered to ${state.config.name}, pending: ${state.pendingMessages.length}, running: ${state.running}, batchTimer: ${!!state.batchTimer}`);
-
-  // If not currently running, schedule batch
-  if (!state.running) {
-    scheduleBatch(state);
-  }
-  // If running, messages will be picked up after current run completes
+  // Start the polling loop
+  synapseLoop(state);
 }
 
 export function stopSynapse(agentId: string): void {
   const state = synapses.get(agentId);
   if (!state) return;
 
-  if (state.batchTimer) {
-    clearTimeout(state.batchTimer);
-  }
+  state.stopped = true;
 
   if (state.proc && !state.proc.killed) {
     state.proc.kill("SIGTERM");
