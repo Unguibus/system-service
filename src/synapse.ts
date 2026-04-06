@@ -155,6 +155,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       "--print",
       "--output-format", "text",
       "--max-turns", String(config.maxTurns || 25),
+      "--dangerously-skip-permissions",
     ];
 
     // Add system prompt
