@@ -154,7 +154,7 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       "--model", config.model,
       "--print",
       "--output-format", "text",
-      "--max-turns", "25",
+      "--max-turns", String(config.maxTurns || 25),
     ];
 
     // Add system prompt

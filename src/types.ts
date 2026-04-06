@@ -7,6 +7,7 @@ export interface AgentConfig {
   effort: "low" | "medium" | "high" | "max";
   executionDelay: number;
   maxContextSize: number;
+  maxTurns: number;
 }
 
 // Agent runtime state (computed, not persisted)

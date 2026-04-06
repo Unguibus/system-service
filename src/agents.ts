@@ -82,6 +82,7 @@ export function updateAgentConfig(
   if (updates.effort !== undefined) config.effort = updates.effort;
   if (updates.executionDelay !== undefined) config.executionDelay = updates.executionDelay;
   if (updates.maxContextSize !== undefined) config.maxContextSize = updates.maxContextSize;
+  if (updates.maxTurns !== undefined) config.maxTurns = updates.maxTurns;
   if (updates.tags !== undefined) config.tags = updates.tags;
 
   writeFileSync(join(claudePath, "agent.json"), JSON.stringify(config, null, 2));

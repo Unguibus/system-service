@@ -54,6 +54,7 @@ export function createAgent(opts: {
     effort: opts.effort ?? "low",
     executionDelay: 2000,
     maxContextSize: 5,
+    maxTurns: 25,
   };
 
   writeAgentJson(claudeDir, config);
@@ -93,6 +94,7 @@ export function onboardAgent(targetDir: string): LifecycleResult & { agentId?: s
       effort: "low",
       executionDelay: 2000,
       maxContextSize: 5,
+    maxTurns: 25,
     };
     writeAgentJson(claudeDir, config);
   }
