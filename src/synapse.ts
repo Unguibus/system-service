@@ -158,15 +158,12 @@ async function runClaude(state: SynapseState, messages: Message[]): Promise<bool
 
   args.push("--system-prompt", buildSystemPrompt(config));
 
-  if (config.assignedDir) {
-    args.push("--add-dir", config.assignedDir);
-  }
 
   const userPrompt = buildPrompt(messages);
 
   try {
     const proc = Bun.spawn(args, {
-      cwd: agentPath,
+      cwd: getEffectiveDir(config),
       stdin: new Blob([userPrompt]),
       stdout: "pipe",
       stderr: "pipe",
