@@ -50,7 +50,7 @@ function getCallerId(req: Request): string {
   return req.headers.get("x-agent-id") ?? AGENT_USER;
 }
 
-function handleRequest(req: Request): Response | Promise<Response> {
+async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
   const method = req.method;
