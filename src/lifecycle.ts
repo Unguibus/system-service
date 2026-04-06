@@ -76,27 +76,28 @@ export function onboardAgent(targetDir: string): LifecycleResult & { agentId?: s
     return { success: false, agentId: "", error: "No .claude/ directory found" };
   }
 
-  // Check if already managed
+  // If already has agent.json with an ID, adopt it as-is
   const existing = readAgentJson(claudeDir);
+  let config: AgentConfig;
+
   if (existing?.id) {
-    return { success: false, agentId: existing.id, error: "Agent already managed" };
+    config = existing;
+  } else {
+    const name = targetDir.split("/").pop() ?? "unnamed";
+    const id = generateAgentId(name);
+    config = {
+      id,
+      name,
+      tags: [],
+      model: "haiku",
+      effort: "low",
+      executionDelay: 2000,
+      maxContextSize: 5,
+    };
+    writeAgentJson(claudeDir, config);
   }
 
-  const name = targetDir.split("/").pop() ?? "unnamed";
-  const id = generateAgentId(name);
-
-  const config: AgentConfig = {
-    id,
-    name,
-    tags: [],
-    model: "haiku",
-    effort: "low",
-    executionDelay: 2000,
-    maxContextSize: 5,
-  };
-
   // Enrich without disturbing existing files
-  writeAgentJson(claudeDir, config);
   if (!existsSync(join(claudeDir, "synapse.status"))) {
     writeFileSync(join(claudeDir, "synapse.status"), "idle");
   }
@@ -104,10 +105,10 @@ export function onboardAgent(targetDir: string): LifecycleResult & { agentId?: s
     writeFileSync(join(claudeDir, "last-run-output.txt"), "");
   }
 
-  registerAgentIAM(id, config.name, "agent", "system", targetDir);
-  startAgent(id, targetDir, config);
+  registerAgentIAM(config.id, config.name, "agent", "system", targetDir);
+  startAgent(config.id, targetDir, config);
 
-  return { success: true, agentId: id };
+  return { success: true, agentId: config.id };
 }
 
 // 3.3 Assign — move unassigned agent into a target directory
