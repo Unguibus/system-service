@@ -153,15 +153,12 @@ async function executeClaudeRun(state: SynapseState): Promise<void> {
       process.env.CLAUDE_PATH ??
       `${process.env.HOME}/.local/bin/claude`;
 
-    // Write MCP config for this agent
+    // Write MCP config pointing to SSE endpoint on system-service
     const mcpConfigPath = join(state.claudePath, "mcp-config.json");
-    const bunPath = `${process.env.HOME}/.bun/bin/bun`;
-    const mcpStdioPath = join(import.meta.dir, "mcp-stdio.ts");
     const mcpConfig = {
       mcpServers: {
         unguibus: {
-          command: bunPath,
-          args: ["run", mcpStdioPath, config.id],
+          url: `http://localhost:7272/mcp/${config.id}/sse`,
         },
       },
     };

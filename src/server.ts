@@ -1,5 +1,6 @@
 import type { Message } from "./types";
 import { AGENT_USER } from "./types";
+import { handleMcpSSE, handleMcpMessage } from "./mcp-sse";
 import { routeMessage } from "./messages";
 import { listAgents, getAgent } from "./agents";
 import {
@@ -346,6 +347,23 @@ function handleRequest(req: Request): Response | Promise<Response> {
         hostId: getHostId(),
       },
     });
+  }
+
+  // --- MCP SSE endpoint ---
+
+  // GET /mcp/:agentId/sse — SSE stream for MCP
+  if (method === "GET" && path.match(/^\/mcp\/[^/]+\/sse$/)) {
+    const agentId = path.split("/")[2];
+    return handleMcpSSE(agentId);
+  }
+
+  // POST /mcp/:agentId/message — JSON-RPC messages for MCP
+  if (method === "POST" && path.match(/^\/mcp\/[^/]+\/message$/)) {
+    const agentId = path.split("/")[2];
+    const sessionId = url.searchParams.get("sessionId") ?? "";
+    const body = await parseBody(req);
+    if (!body) return json({ error: "Invalid body" }, 400);
+    return handleMcpMessage(agentId, sessionId, body);
   }
 
   return json({ error: "Not found" }, 404);
