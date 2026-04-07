@@ -131,6 +131,22 @@ async function handleRequest(req: Request): Promise<Response> {
     return json(messages);
   }
 
+  // POST /agents/:id/inbox/ack — acknowledge messages up to timestamp
+  if (method === "POST" && path.match(/^\/agents\/[^/]+\/inbox\/ack$/)) {
+    return (async () => {
+      const agentId = path.split("/")[2];
+      const body = await parseBody(req);
+      const ts = body?.timestamp;
+      if (!ts) return json({ error: "Missing timestamp" }, 400);
+      const { ackInbox } = await import("./conversation-db");
+      const { getSynapseState } = await import("./synapse");
+      ackInbox(agentId, ts);
+      const state = getSynapseState(agentId);
+      if (state) state.ackedUpTo = ts;
+      return json({ acked: true, upTo: ts });
+    })();
+  }
+
   // GET /agents/:id/conversations — read conversation history
   if (method === "GET" && path.match(/^\/agents\/[^/]+\/conversations$/)) {
     const agentId = path.split("/")[2];
