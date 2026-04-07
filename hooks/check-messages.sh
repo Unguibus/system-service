@@ -2,22 +2,28 @@
 # Unguibus message hook — runs after each Claude response
 # Checks if the current session has pending messages
 
-SESSION_ID=$(cat | jq -r '.session_id // empty')
-if [ -z "$SESSION_ID" ]; then exit 0; fi
+python3 -c "
+import sys, json, urllib.request
 
-# Check inbox for this session/agent
-RESPONSE=$(curl -s "http://localhost:7272/agents/$SESSION_ID/inbox" 2>/dev/null)
-if [ -z "$RESPONSE" ] || [ "$RESPONSE" = "[]" ] || echo "$RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
-  exit 0
-fi
+try:
+    data = json.load(sys.stdin)
+    session_id = data.get('session_id', '')
+    if not session_id:
+        sys.exit(0)
 
-COUNT=$(echo "$RESPONSE" | jq 'length')
-if [ "$COUNT" = "0" ]; then exit 0; fi
+    req = urllib.request.Request(f'http://localhost:7272/agents/{session_id}/inbox')
+    with urllib.request.urlopen(req, timeout=2) as resp:
+        messages = json.loads(resp.read())
 
-# Format messages for Claude
-FORMATTED=$(echo "$RESPONSE" | jq -r '.[] | "From \(.from): \(.body)"' 2>/dev/null)
+    if not messages or not isinstance(messages, list) or len(messages) == 0:
+        sys.exit(0)
 
-# Return additionalContext so Claude sees the messages
-jq -n --arg msgs "$FORMATTED" --arg count "$COUNT" '{
-  "additionalContext": ("You have " + $count + " new message(s) from the unguibus agent network:\n\n" + $msgs + "\n\nUse send_message to reply if needed.")
-}'
+    formatted = '\n'.join(f'From {m[\"from\"]}: {m[\"body\"]}' for m in messages)
+    count = len(messages)
+
+    print(json.dumps({
+        'additionalContext': f'You have {count} new message(s) from the unguibus agent network:\n\n{formatted}\n\nUse send_message to reply if needed.'
+    }))
+except:
+    sys.exit(0)
+"
