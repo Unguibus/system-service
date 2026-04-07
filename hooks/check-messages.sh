@@ -22,7 +22,10 @@ try:
     count = len(messages)
 
     print(json.dumps({
-        'additionalContext': f'You have {count} new message(s) from the unguibus agent network:\n\n{formatted}\n\nUse send_message to reply if needed.'
+        'hookSpecificOutput': {
+            'hookEventName': 'Stop',
+            'additionalContext': f'You have {count} new message(s) from the unguibus agent network:\n\n{formatted}\n\nUse send_message to reply if needed.'
+        }
     }))
 except:
     sys.exit(0)
